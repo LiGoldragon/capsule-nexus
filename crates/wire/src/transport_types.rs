@@ -77,7 +77,7 @@ pub struct CoreBootstrap {
     pub place: Place,
     pub admission: Admission,
     pub peer_identity: shared_translator::PeerIdentity,
-    pub instance_id: signal_herdr_nexus::InstanceId,
+    pub instance_id: signal_capsule_nexus::InstanceId,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
@@ -85,6 +85,6 @@ pub struct CoreBootstrap {
 pub struct TranslatorBootstrap {
     pub place: Place,
     pub admission: Admission,
-    pub budget_value: meta_signal_herdr_nexus::BudgetValue,
+    pub budget_value: meta_signal_capsule_nexus::BudgetValue,
     pub peer_identity: shared_translator::PeerIdentity,
 }

@@ -133,14 +133,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
-name = "herdr-nexus-translator"
+name = "capsule-nexus-translator"
 version = "0.1.0"
 dependencies = [
  "datom-codec 0.32.3",
  "protos",
  "serde",
  "serde_json",
- "signal-herdr-nexus",
+ "signal-capsule-nexus",
  "translator",
 ]
 
@@ -367,9 +367,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "signal-herdr-nexus"
+name = "signal-capsule-nexus"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-herdr-nexus?rev=2a6c8883bb9ce1ac9467c359bd323c3aa895d580#2a6c8883bb9ce1ac9467c359bd323c3aa895d580"
+source = "git+https://github.com/LiGoldragon/signal-capsule-nexus?rev=2a6c8883bb9ce1ac9467c359bd323c3aa895d580#2a6c8883bb9ce1ac9467c359bd323c3aa895d580"
 dependencies = [
  "datom-codec 0.32.3",
  "protos",

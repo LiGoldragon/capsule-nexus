@@ -1,10 +1,10 @@
-use emission_herdr_nexus::{
+use emission_capsule_nexus::{
     AgentPrompt_Data, AgentStart_Data, ExternalOutcome, Herdr, SendKeys_Data, Verb,
     WorkspaceCreate_Data,
 };
-use herdr_nexus_translator::server::{execute, Runtime};
-use emission_herdr_nexus::Timeout;
-use signal_herdr_nexus::{
+use capsule_nexus_translator::server::{execute, Runtime};
+use emission_capsule_nexus::Timeout;
+use signal_capsule_nexus::{
     AgentKind, AgentName, Command, Executable, Keys, Name, PaneId, Program, Root, Session, State,
     Text, Value, Variable,
 };
@@ -25,7 +25,7 @@ struct Fixture {
 impl Fixture {
     fn new(body: &str) -> Self {
         let directory = std::env::temp_dir().join(format!(
-            "herdr-translator-fixture-{}-{}",
+            "capsule-translator-fixture-{}-{}",
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
@@ -93,7 +93,7 @@ case "$3:$4" in
     printf '%s\n' '{"id":"cli:workspace:create","result":{"type":"workspace_created","workspace":{},"tab":{},"root_pane":{"pane_id":"w:p","terminal_id":"t","workspace_id":"w","tab_id":"tab","focused":true,"agent_status":"unknown","revision":1}}}'
     ;;
   workspace:list)
-    printf '%s\n' '{"id":"cli:workspace:list","result":{"type":"workspace_list","workspaces":[{"workspace_id":"w","label":"herdr-nexus-v1:7:fixture:1"}]}}'
+    printf '%s\n' '{"id":"cli:workspace:list","result":{"type":"workspace_list","workspaces":[{"workspace_id":"w","label":"capsule-nexus-v0:7:fixture:1"}]}}'
     ;;
   agent:start)
     printf '%s\n' '{"id":"cli:agent:start","result":{"type":"agent_started","agent":{"terminal_id":"t","name":"probe","agent":"codex","agent_status":"idle","workspace_id":"w","tab_id":"tab","pane_id":"w:p","focused":true,"interactive_ready":true,"revision":2},"argv":["codex"],"executable":"codex"}}'
@@ -125,9 +125,9 @@ fn production_execute_covers_every_external_verb_and_exact_argv() {
     let created = execute(
         &runtime,
         &herdr(Verb::WorkspaceCreate(WorkspaceCreate_Data {
-            creation_id: signal_herdr_nexus::CreationId {
-                instance_id: signal_herdr_nexus::InstanceId("fixture".into()),
-                sequence: signal_herdr_nexus::Sequence(1),
+            creation_id: signal_capsule_nexus::CreationId {
+                instance_id: signal_capsule_nexus::InstanceId("fixture".into()),
+                sequence: signal_capsule_nexus::Sequence(1),
             },
             root: Root("/work with space".into()),
             variable_vector: vec![Variable {
@@ -147,7 +147,7 @@ fn production_execute_covers_every_external_verb_and_exact_argv() {
             "--cwd",
             "/work with space",
             "--label",
-            "herdr-nexus-v1:7:fixture:1",
+            "capsule-nexus-v0:7:fixture:1",
             "--env",
             "A=one two",
         ]

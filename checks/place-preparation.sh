@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Both entry points prepare their place before anything is spawned, bound or opened: the
-# launcher (herdr-pair) before its directory checks and its children, the direct daemon before
+# launcher (capsule-pair) before its directory checks and its children, the direct daemon before
 # its sockets. Cases: fresh, repeated start, legacy-only byte-preserving move, destination-only
 # reopen, both stores refused with both unchanged, failure after the move with a completing retry,
 # two daemons started together on one legacy place, and no socket or child after a refusal.
@@ -42,7 +42,7 @@ legacy=$HOME/.local/state/metaflow/one
 place="{ one $directory $state }"
 
 tree() { (cd "$1" && find . -type f -print0 | sort -z | xargs -0 sha256sum); }
-pair_bound() { [[ -S $directory/herdr-nexus-meta-translator.sock && -S $directory/herdr-nexus-meta.sock ]]; }
+pair_bound() { [[ -S $directory/capsule-meta-translator.sock && -S $directory/capsule-meta.sock ]]; }
 prepared() { [[ -d $directory && -d $state && ! -e $legacy ]]; }
 wait_for() {
   for _ in $(seq 1 200); do
@@ -63,11 +63,11 @@ seed_legacy() {
   printf 'first\0second\n' >"$legacy/record"
   printf '\377\000\376' >"$legacy/nested/binary"
 }
-start_pair() { "$package/bin/herdr-pair" "$place" >"$base/pair.log" 2>&1 & pair=$!; }
+start_pair() { "$package/bin/capsule-pair" "$place" >"$base/pair.log" 2>&1 & pair=$!; }
 start_daemon() {
   local log=$1
-  "$package/bin/herdr-nexus-place" "$place" Core "$(id -u)" "$$" 70000 8388608 25 "instance-$log" \
-    | "$package/bin/herdr-nexus-daemon" >"$base/$log.log" 2>&1 &
+  "$package/bin/capsule-place" "$place" Core "$(id -u)" "$$" 70000 8388608 25 "instance-$log" \
+    | "$package/bin/capsule-nexus-daemon" >"$base/$log.log" 2>&1 &
   started=$!
 }
 refused_pair() {
@@ -103,7 +103,7 @@ daemon=$started
     return 1
   fi
   daemon=
-  ! [[ -S $directory/herdr-nexus.sock || -S $directory/herdr-nexus-meta.sock ]]
+  ! [[ -S $directory/capsule.sock || -S $directory/capsule-meta.sock ]]
 }
 
 # launcher: fresh, then a repeated start changes nothing

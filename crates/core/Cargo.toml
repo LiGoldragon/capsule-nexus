@@ -1,5 +1,5 @@
 [package]
-name = "herdr-nexus-core"
+name = "capsule-nexus-core"
 version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -10,16 +10,16 @@ default = []
 datom = [
   "dep:datom-codec",
   "dep:protos",
-  "signal-herdr-nexus/datom",
+  "signal-capsule-nexus/datom",
   "translator/datom",
 ]
 
 [dependencies]
 datom-codec = { git = "https://github.com/LiGoldragon/datom-codec", rev = "09a0526", optional = true }
 protos = { git = "https://github.com/LiGoldragon/protos", rev = "c93b598", optional = true }
-signal-herdr-nexus.workspace = true
+signal-capsule-nexus.workspace = true
 translator.workspace = true
-emission-herdr-nexus = { path = "../emission" }
+emission-capsule-nexus = { path = "../emission" }
 rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 
 [lints.rust]

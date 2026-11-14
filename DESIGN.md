@@ -1,4 +1,4 @@
-# Herdr Nexus version 1 proof
+# Capsule Nexus version 1 proof
 
 ## Boundaries
 

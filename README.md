@@ -1,4 +1,4 @@
-# herdr-nexus
+# capsule-nexus
 
 Fresh version 1 proof of the Nexus that owns herdr panes. The public, meta, and
 Emission contracts are authored in Ethos and generated without hand-written

@@ -1,4 +1,4 @@
-//! Shared typed ingress and bounded lane framing for the herdr Nexus.
+//! Shared typed ingress and bounded lane framing for the Capsule Nexus.
 
 pub mod frame;
 pub mod deadline;
@@ -12,13 +12,13 @@ pub mod transport_types;
 
 pub fn socket_names() -> transport_types::SocketNames {
     transport_types::SocketNames {
-        public_nexus_socket: transport_types::PublicNexusSocket("herdr-nexus.sock".into()),
-        meta_nexus_socket: transport_types::MetaNexusSocket("herdr-nexus-meta.sock".into()),
+        public_nexus_socket: transport_types::PublicNexusSocket("capsule.sock".into()),
+        meta_nexus_socket: transport_types::MetaNexusSocket("capsule-meta.sock".into()),
         public_translator_socket: transport_types::PublicTranslatorSocket(
-            "herdr-nexus-translator.sock".into(),
+            "capsule-translator.sock".into(),
         ),
         meta_translator_socket: transport_types::MetaTranslatorSocket(
-            "herdr-nexus-meta-translator.sock".into(),
+            "capsule-meta-translator.sock".into(),
         ),
     }
 }

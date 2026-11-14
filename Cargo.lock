@@ -50,6 +50,72 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
+name = "capsule-nexus-core"
+version = "0.2.0"
+dependencies = [
+ "datom-codec",
+ "emission-capsule-nexus",
+ "protos",
+ "rkyv",
+ "signal-capsule-nexus",
+ "translator",
+]
+
+[[package]]
+name = "capsule-nexus-daemon"
+version = "0.2.0"
+dependencies = [
+ "capsule-nexus-core",
+ "capsule-nexus-wire",
+ "core-meta-capsule-nexus",
+ "emission-capsule-nexus",
+ "meta-signal-capsule-nexus",
+ "nix",
+ "rustix",
+ "signal",
+ "signal-capsule-nexus",
+ "translator",
+]
+
+[[package]]
+name = "capsule-nexus-translator"
+version = "0.2.0"
+dependencies = [
+ "capsule-nexus-wire",
+ "core-meta-capsule-nexus",
+ "datom-codec",
+ "emission-capsule-nexus",
+ "libc",
+ "meta-signal-capsule-nexus",
+ "nix",
+ "protos",
+ "rkyv",
+ "rustix",
+ "serde",
+ "serde_json",
+ "signal",
+ "signal-capsule-nexus",
+ "translator",
+]
+
+[[package]]
+name = "capsule-nexus-wire"
+version = "0.2.0"
+dependencies = [
+ "core-meta-capsule-nexus",
+ "datom-codec",
+ "libc",
+ "meta-signal-capsule-nexus",
+ "nix",
+ "protos",
+ "rkyv",
+ "signal",
+ "signal-capsule-nexus",
+ "tokio",
+ "translator",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -62,11 +128,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
-name = "core-meta-herdr-nexus"
+name = "core-meta-capsule-nexus"
 version = "0.2.0"
 dependencies = [
  "datom-codec",
- "meta-signal-herdr-nexus",
+ "meta-signal-capsule-nexus",
  "protos",
  "rkyv",
  "signal",
@@ -94,14 +160,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "emission-herdr-nexus"
+name = "emission-capsule-nexus"
 version = "0.2.0"
 dependencies = [
  "datom-codec",
  "protos",
  "rkyv",
  "signal",
- "signal-herdr-nexus",
+ "signal-capsule-nexus",
 ]
 
 [[package]]
@@ -165,72 +231,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
-name = "herdr-nexus-core"
-version = "0.2.0"
-dependencies = [
- "datom-codec",
- "emission-herdr-nexus",
- "protos",
- "rkyv",
- "signal-herdr-nexus",
- "translator",
-]
-
-[[package]]
-name = "herdr-nexus-daemon"
-version = "0.2.0"
-dependencies = [
- "core-meta-herdr-nexus",
- "emission-herdr-nexus",
- "herdr-nexus-core",
- "herdr-nexus-wire",
- "meta-signal-herdr-nexus",
- "nix",
- "rustix",
- "signal",
- "signal-herdr-nexus",
- "translator",
-]
-
-[[package]]
-name = "herdr-nexus-translator"
-version = "0.2.0"
-dependencies = [
- "core-meta-herdr-nexus",
- "datom-codec",
- "emission-herdr-nexus",
- "herdr-nexus-wire",
- "libc",
- "meta-signal-herdr-nexus",
- "nix",
- "protos",
- "rkyv",
- "rustix",
- "serde",
- "serde_json",
- "signal",
- "signal-herdr-nexus",
- "translator",
-]
-
-[[package]]
-name = "herdr-nexus-wire"
-version = "0.2.0"
-dependencies = [
- "core-meta-herdr-nexus",
- "datom-codec",
- "libc",
- "meta-signal-herdr-nexus",
- "nix",
- "protos",
- "rkyv",
- "signal",
- "signal-herdr-nexus",
- "tokio",
- "translator",
-]
-
-[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -285,9 +285,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "meta-signal-herdr-nexus"
+name = "meta-signal-capsule-nexus"
 version = "0.4.1"
-source = "git+https://github.com/LiGoldragon/meta-signal-herdr-nexus?rev=bf27dc2#bf27dc28a781b53aad553398faa27db1524651e6"
+source = "git+https://github.com/LiGoldragon/meta-signal-capsule-nexus?rev=b8fde9e2be92f75945a208208d4b93d6e5fd7e69#b8fde9e2be92f75945a208208d4b93d6e5fd7e69"
 dependencies = [
  "datom-codec",
  "protos",
@@ -520,9 +520,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "signal-herdr-nexus"
+name = "signal-capsule-nexus"
 version = "0.4.0"
-source = "git+https://github.com/LiGoldragon/signal-herdr-nexus?rev=10b9d21#10b9d215097504d5c911bb491ef8a5f276a3c683"
+source = "git+https://github.com/LiGoldragon/signal-capsule-nexus?rev=dc941e72a31f7084f80b6fa8fe9aa49963acb4a1#dc941e72a31f7084f80b6fa8fe9aa49963acb4a1"
 dependencies = [
  "datom-codec",
  "protos",

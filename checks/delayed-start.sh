@@ -38,17 +38,17 @@ EOF
 } >"$base/herdr-fixture"
 chmod +x "$base/herdr-fixture"
 
-"$package/bin/herdr-pair" "$place" >"$base/pair.log" 2>&1 &
+"$package/bin/capsule-pair" "$place" >"$base/pair.log" 2>&1 &
 pair=$!
 for _ in $(seq 1 100); do
-  [[ -S $directory/herdr-nexus-meta-translator.sock && -S $directory/herdr-nexus-meta.sock ]] && break
+  [[ -S $directory/capsule-meta-translator.sock && -S $directory/capsule-meta.sock ]] && break
   sleep .02
 done
-[[ -S $directory/herdr-nexus-meta-translator.sock ]]
-[[ -S $directory/herdr-nexus-meta.sock ]]
+[[ -S $directory/capsule-meta-translator.sock ]]
+[[ -S $directory/capsule-meta.sock ]]
 
-meta="$package/bin/herdr-nexus-meta"
-public="$package/bin/herdr-nexus"
+meta="$package/bin/capsule-meta"
+public="$package/bin/capsule-nexus"
 "$meta" one "Configure.HerdrPath.$base/herdr-fixture" >/dev/null
 "$meta" one 'Configure.CallTimeout.50' >/dev/null
 "$meta" one 'Configure.OutputLimit.1048576' >/dev/null

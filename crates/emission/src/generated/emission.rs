@@ -8,7 +8,7 @@
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct Herdr {
-    pub session: signal_herdr_nexus::Session,
+    pub session: signal_capsule_nexus::Session,
     pub verb: Verb,
 }
 #[rustfmt::skip]
@@ -19,31 +19,31 @@ pub struct Timeout(pub i64);
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct WorkspaceCreate_Data {
-    pub creation_id: signal_herdr_nexus::CreationId,
-    pub root: signal_herdr_nexus::Root,
-    pub variable_vector: std::vec::Vec<signal_herdr_nexus::Variable>,
+    pub creation_id: signal_capsule_nexus::CreationId,
+    pub root: signal_capsule_nexus::Root,
+    pub variable_vector: std::vec::Vec<signal_capsule_nexus::Variable>,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct AgentStart_Data {
-    pub pane_id: signal_herdr_nexus::PaneId,
-    pub command: signal_herdr_nexus::Command,
+    pub pane_id: signal_capsule_nexus::PaneId,
+    pub command: signal_capsule_nexus::Command,
     pub timeout: Timeout,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct AgentPrompt_Data {
-    pub pane_id: signal_herdr_nexus::PaneId,
-    pub text: signal_herdr_nexus::Text,
+    pub pane_id: signal_capsule_nexus::PaneId,
+    pub text: signal_capsule_nexus::Text,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct SendKeys_Data {
-    pub pane_id: signal_herdr_nexus::PaneId,
-    pub keys: signal_herdr_nexus::Keys,
+    pub pane_id: signal_capsule_nexus::PaneId,
+    pub keys: signal_capsule_nexus::Keys,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
@@ -54,7 +54,7 @@ pub enum Verb {
     AgentStart(AgentStart_Data),
     AgentPrompt(AgentPrompt_Data),
     SendKeys(SendKeys_Data),
-    PaneClose(signal_herdr_nexus::PaneId),
+    PaneClose(signal_capsule_nexus::PaneId),
     PaneList,
     AgentList,
 }
@@ -78,7 +78,7 @@ pub struct TabId(pub String);
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct PaneListing {
-    pub pane: signal_herdr_nexus::Pane,
+    pub pane: signal_capsule_nexus::Pane,
     pub terminal_id: TerminalId,
     pub workspace_id: WorkspaceId,
     pub tab_id: TabId,
@@ -87,11 +87,11 @@ pub struct PaneListing {
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct AgentListing {
-    pub pane: signal_herdr_nexus::Pane,
+    pub pane: signal_capsule_nexus::Pane,
     pub terminal_id: TerminalId,
     pub workspace_id: WorkspaceId,
     pub tab_id: TabId,
-    pub state: signal_herdr_nexus::State,
+    pub state: signal_capsule_nexus::State,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
@@ -104,20 +104,20 @@ pub struct WorkspaceListing {
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct PaneObservation {
-    pub pane: signal_herdr_nexus::Pane,
-    pub state: signal_herdr_nexus::State,
+    pub pane: signal_capsule_nexus::Pane,
+    pub state: signal_capsule_nexus::State,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub enum ExternalOutcome {
     Done,
-    Started(signal_herdr_nexus::State),
-    Created(signal_herdr_nexus::Pane),
+    Started(signal_capsule_nexus::State),
+    Created(signal_capsule_nexus::Pane),
     Panes(std::vec::Vec<PaneListing>),
     Agents(std::vec::Vec<AgentListing>),
     Workspaces(std::vec::Vec<WorkspaceListing>),
-    Refused(signal_herdr_nexus::Refusal),
+    Refused(signal_capsule_nexus::Refusal),
     Uncertain,
 }
 #[rustfmt::skip]

@@ -19,38 +19,38 @@ directory=$XDG_RUNTIME_DIR/nexus/one
 state=$HOME/.local/state/nexus/one
 mkdir -p "$directory" "$state"
 place="{ one $directory $state }"
-"$package/bin/herdr-pair" "$place" >"$base/pair.log" 2>&1 &
+"$package/bin/capsule-pair" "$place" >"$base/pair.log" 2>&1 &
 pair_pid=$!
 for _ in $(seq 1 200); do
-  [[ -S $directory/herdr-nexus-meta.sock && -S $directory/herdr-nexus-meta-translator.sock ]] && break
+  [[ -S $directory/capsule-meta.sock && -S $directory/capsule-meta-translator.sock ]] && break
   sleep .02
 done
-[[ -S $directory/herdr-nexus-meta.sock ]]
-[[ -S $directory/herdr-nexus-meta-translator.sock ]]
+[[ -S $directory/capsule-meta.sock ]]
+[[ -S $directory/capsule-meta-translator.sock ]]
 
 # A client which is not the captured translator is one failed connection, not
 # a failed privileged listener or pair.
-python3 - "$directory/herdr-nexus-meta.sock" <<'PY'
+python3 - "$directory/capsule-meta.sock" <<'PY'
 import socket, sys
 s = socket.socket(socket.AF_UNIX)
 s.connect(sys.argv[1])
 s.close()
 PY
-"$package/bin/herdr-nexus-meta" one 'Configure.Polling.25' \
+"$package/bin/capsule-meta" one 'Configure.Polling.25' \
   | grep -q Configured
 
 # The text front likewise bounds malformed and partially-progressed frames to
 # their own connections.  The partial body exceeds the deployment progress bound.
-python3 - "$directory/herdr-nexus-meta-translator.sock" <<'PY'
+python3 - "$directory/capsule-meta-translator.sock" <<'PY'
 import socket, sys
 s = socket.socket(socket.AF_UNIX)
 s.connect(sys.argv[1])
 s.sendall(b'\x00\x00\x00\x01x')
 s.close()
 PY
-"$package/bin/herdr-nexus-meta" one 'Configure.StartTimeout.1000' \
+"$package/bin/capsule-meta" one 'Configure.StartTimeout.1000' \
   | grep -q Configured
-python3 - "$directory/herdr-nexus-meta-translator.sock" <<'PY'
+python3 - "$directory/capsule-meta-translator.sock" <<'PY'
 import socket, sys, time
 s = socket.socket(socket.AF_UNIX)
 s.connect(sys.argv[1])
@@ -58,19 +58,19 @@ s.sendall(b'\x00\x00\x00\x20x')
 time.sleep(70.25)
 s.close()
 PY
-"$package/bin/herdr-nexus-meta" one 'Configure.FrameCapacity.8388608' \
+"$package/bin/capsule-meta" one 'Configure.FrameCapacity.8388608' \
   | grep -q Configured
 
-"$package/bin/herdr-nexus-meta" one \
-  "Configure.HerdrPath.$package/bin/herdr-nexus" | grep -q Configured
-"$package/bin/herdr-nexus-meta" one 'Configure.CallTimeout.1000' | grep -q Configured
-"$package/bin/herdr-nexus-meta" one 'Configure.OutputLimit.1048576' | grep -q Configured
-"$package/bin/herdr-nexus-meta" one 'Configure.TextBudget.{ 1048576 64 }' | grep -q Ready
-"$package/bin/herdr-nexus-meta" one 'Configure.SubscriberCapacity.64' | grep -q Configured
-"$package/bin/herdr-nexus-meta" one 'Configure.TransportTimeout.1000' | grep -q Ready
+"$package/bin/capsule-meta" one \
+  "Configure.HerdrPath.$package/bin/capsule-nexus" | grep -q Configured
+"$package/bin/capsule-meta" one 'Configure.CallTimeout.1000' | grep -q Configured
+"$package/bin/capsule-meta" one 'Configure.OutputLimit.1048576' | grep -q Configured
+"$package/bin/capsule-meta" one 'Configure.TextBudget.{ 1048576 64 }' | grep -q Ready
+"$package/bin/capsule-meta" one 'Configure.SubscriberCapacity.64' | grep -q Configured
+"$package/bin/capsule-meta" one 'Configure.TransportTimeout.1000' | grep -q Ready
 
 # The ordinary path on this same pair still accepts and answers a typed call.
-"$package/bin/herdr-nexus" one 'List.smoke' >"$base/ordinary.out"
+"$package/bin/capsule-nexus" one 'List.smoke' >"$base/ordinary.out"
 grep -Eq 'Listed|Refused|Unavailable' "$base/ordinary.out"
 kill -0 "$pair_pid"
 

@@ -1,5 +1,5 @@
 [package]
-name = "herdr-nexus-translator"
+name = "capsule-nexus-translator"
 version = "0.2.0"
 edition = "2021"
 publish = false
@@ -8,8 +8,8 @@ publish = false
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libc = "0.2"
-herdr-nexus-wire = { path = "../wire" }
-core-meta-herdr-nexus = { path = "../core-meta" }
+capsule-nexus-wire = { path = "../wire" }
+core-meta-capsule-nexus = { path = "../core-meta" }
 nix = { version = "0.30", features = ["fs", "poll", "process", "signal", "socket", "user"] }
 rustix = { version = "1", features = ["process", "rand"] }
 rkyv = { version = "0.8", features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
@@ -17,9 +17,9 @@ signal = { git = "https://github.com/LiGoldragon/signal", rev = "6d4eb74" }
 protos = { git = "https://github.com/LiGoldragon/protos", rev = "c93b598", optional = true }
 datom-codec = { git = "https://github.com/LiGoldragon/datom-codec", rev = "09a0526", optional = true }
 
-[dependencies.signal-herdr-nexus]
-git = "https://github.com/LiGoldragon/signal-herdr-nexus"
-rev = "10b9d21"
+[dependencies.signal-capsule-nexus]
+git = "https://github.com/LiGoldragon/signal-capsule-nexus"
+rev = "dc941e72a31f7084f80b6fa8fe9aa49963acb4a1"
 
 [dependencies.shared-translator]
 package = "translator"
@@ -30,38 +30,38 @@ features = ["unix"]
 
 [features]
 default = []
-text = ["datom", "dep:protos", "dep:datom-codec", "signal-herdr-nexus/datom", "shared-translator/text"]
+text = ["datom", "dep:protos", "dep:datom-codec", "signal-capsule-nexus/datom", "shared-translator/text"]
 datom = []
 
 
-[dependencies.emission-herdr-nexus]
+[dependencies.emission-capsule-nexus]
 path = "../emission"
 
-[dependencies.meta-signal-herdr-nexus]
-package = "meta-signal-herdr-nexus"
-git = "https://github.com/LiGoldragon/meta-signal-herdr-nexus"
-rev = "bf27dc2"
+[dependencies.meta-signal-capsule-nexus]
+package = "meta-signal-capsule-nexus"
+git = "https://github.com/LiGoldragon/meta-signal-capsule-nexus"
+rev = "b8fde9e2be92f75945a208208d4b93d6e5fd7e69"
 features = ["datom"]
 
 [[bin]]
-name = "herdr-nexus"
-path = "src/bin/herdr-nexus.rs"
+name = "capsule"
+path = "src/bin/capsule.rs"
 required-features = ["text"]
 [[bin]]
-name = "herdr-nexus-meta"
-path = "src/bin/herdr-nexus-meta.rs"
+name = "capsule-meta"
+path = "src/bin/capsule-meta.rs"
 required-features = ["text"]
 [[bin]]
-name = "herdr-nexus-place"
-path = "src/bin/herdr-nexus-place.rs"
-required-features = ["text"]
-
-[[bin]]
-name = "herdr-translator"
-path = "src/bin/herdr-translator.rs"
+name = "capsule-place"
+path = "src/bin/capsule-place.rs"
 required-features = ["text"]
 
 [[bin]]
-name = "herdr-pair"
-path = "src/bin/herdr-pair.rs"
+name = "capsule-translator"
+path = "src/bin/capsule-translator.rs"
+required-features = ["text"]
+
+[[bin]]
+name = "capsule-pair"
+path = "src/bin/capsule-pair.rs"
 required-features = ["text"]

@@ -1,5 +1,5 @@
 {
-  description = "herdr Nexus v1 — typed core, daemon, and external translator";
+  description = "Capsule Nexus v0 — typed core, daemon, and external translator";
 
   inputs = {
     base.url = "github:LiGoldragon/build-base";
@@ -31,31 +31,31 @@
           # Its crates are the base's, under the feature set name this build
           # takes: the daemon's plain, the CLI's datom.
           memberWith = composed.binaries;
-          daemon = memberWith "herdr-nexus-daemon" [ ];
-          built = memberWith "herdr-nexus-translator" [ "default" "text" ];
-          translator = pkgs.runCommand "herdr-translator" { } ''
+          daemon = memberWith "capsule-nexus-daemon" [ ];
+          built = memberWith "capsule-nexus-translator" [ "default" "text" ];
+          translator = pkgs.runCommand "capsule-translator" { } ''
             mkdir -p "$out/bin"
-            cp ${built}/bin/herdr-translator "$out/bin/herdr-translator"
+            cp ${built}/bin/capsule-translator "$out/bin/capsule-translator"
           '';
-          cli = pkgs.runCommand "herdr-nexus-cli" { } ''
+          cli = pkgs.runCommand "capsule-nexus-cli" { } ''
             mkdir -p "$out/bin" "$out/libexec"
-            for executable in herdr-nexus herdr-nexus-meta herdr-nexus-place; do
+            for executable in capsule capsule-meta capsule-place; do
               cp ${built}/bin/$executable "$out/bin/$executable"
             done
-            cp ${built}/bin/herdr-pair "$out/libexec/herdr-pair-launcher"
+            cp ${built}/bin/capsule-pair "$out/libexec/capsule-pair-launcher"
           '';
-          pair = pkgs.writeShellScriptBin "herdr-pair" ''
+          pair = pkgs.writeShellScriptBin "capsule-pair" ''
             if [[ $# -ne 1 ]]; then
-              echo "usage: herdr-pair '<Place>'" >&2
+              echo "usage: capsule-pair '<Place>'" >&2
               exit 64
             fi
-            exec ${cli}/libexec/herdr-pair-launcher "$1" \
-              ${daemon}/bin/herdr-nexus-daemon \
-              ${translator}/bin/herdr-translator \
+            exec ${cli}/libexec/capsule-pair-launcher "$1" \
+              ${daemon}/bin/capsule-nexus-daemon \
+              ${translator}/bin/capsule-translator \
               70000 8388608 25 1048576 64
           '';
           default = pkgs.symlinkJoin {
-            name = "herdr-nexus-v1";
+            name = "capsule-nexus-v0";
             paths = [ daemon translator cli pair ];
           };
         in

@@ -1,5 +1,5 @@
-use herdr_nexus_translator::{maximum_text_budget, transport_types::*};
-use meta_signal_herdr_nexus::{BudgetValue, DepthLimit, NodeLimit};
+use capsule_nexus_translator::{maximum_text_budget, transport_types::*};
+use meta_signal_capsule_nexus::{BudgetValue, DepthLimit, NodeLimit};
 use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::waitpid;
 use nix::unistd::{Pid, Uid};
@@ -8,7 +8,7 @@ use shared_translator::{PeerIdentity, ProcessId, UserId};
 use std::io::Write;
 use std::process::{Child, Command, Stdio};
 
-fn fresh_instance_id() -> Result<signal_herdr_nexus::InstanceId, Box<dyn std::error::Error>> {
+fn fresh_instance_id() -> Result<signal_capsule_nexus::InstanceId, Box<dyn std::error::Error>> {
     let mut bytes = [0_u8; 16];
     let mut filled = 0;
     while filled < bytes.len() {
@@ -26,7 +26,7 @@ fn fresh_instance_id() -> Result<signal_herdr_nexus::InstanceId, Box<dyn std::er
         use std::fmt::Write as _;
         write!(&mut identifier, "{byte:02x}")?;
     }
-    Ok(signal_herdr_nexus::InstanceId(identifier))
+    Ok(signal_capsule_nexus::InstanceId(identifier))
 }
 
 fn integer(value: Option<String>, name: &str) -> Result<i64, Box<dyn std::error::Error>> {
@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "RETRY_DELAY_MILLISECONDS",
         )?),
     };
-    herdr_nexus_wire::ValidAdmission::try_from(&admission)
+    capsule_nexus_wire::ValidAdmission::try_from(&admission)
         .map_err(|message| format!("invalid admission: {message}"))?;
     let budget_value = BudgetValue {
         node_limit: NodeLimit(integer(arguments.next(), "TEXT_NODE_LIMIT")?),

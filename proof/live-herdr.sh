@@ -49,11 +49,11 @@ trap 'exit 143' TERM
 
 cat > "$base/herdr" <<WRAPPER
 #!/usr/bin/env bash
-exec "$package/bin/herdr-nexus" "\$@"
+exec "$package/bin/capsule-nexus" "\$@"
 WRAPPER
 cat > "$base/herdr-meta" <<WRAPPER
 #!/usr/bin/env bash
-exec "$package/bin/herdr-nexus-meta" "\$@"
+exec "$package/bin/capsule-meta" "\$@"
 WRAPPER
 chmod +x "$base/herdr" "$base/herdr-meta"
 public="$base/herdr"
@@ -64,10 +64,10 @@ start_metaflow() {
   local directory state
   directory=$([[ $name == one ]] && printf %s "$one" || printf %s "$two")
   state=$([[ $name == one ]] && printf %s "$state_one" || printf %s "$state_two")
-  "$package/bin/herdr-pair" "{ $name $directory $state }" >"$base/$name-pair.log" 2>&1 &
+  "$package/bin/capsule-pair" "{ $name $directory $state }" >"$base/$name-pair.log" 2>&1 &
   pids+=("$!")
   for _ in $(seq 1 100); do
-    [[ -S "$directory/herdr-nexus-meta-translator.sock" && -S "$directory/herdr-nexus-meta.sock" ]] && return
+    [[ -S "$directory/capsule-meta-translator.sock" && -S "$directory/capsule-meta.sock" ]] && return
     sleep .05
   done
   echo "metaflow $name did not bind bootstrap sockets" >&2

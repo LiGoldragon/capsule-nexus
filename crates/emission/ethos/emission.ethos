@@ -1,6 +1,6 @@
 ; Temporary stand-in: Emission is a Signal root until ethos-zero supports Emission.
 Signal
-[ signal_herdr_nexus:[ Session PaneId Pane Root Variable Command Text Keys State Refusal CreationId ] ]
+[ signal_capsule_nexus:[ Session PaneId Pane Root Variable Command Text Keys State Refusal CreationId ] ]
 [ Emit.Herdr ]                                        ; emissions: one typed herdr call
 [ Emitted.ExternalOutcome ]                           ; external outcome
 [ Herdr.{ Session Verb }                               ; types: exactly one Session per call

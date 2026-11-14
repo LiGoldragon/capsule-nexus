@@ -1,4 +1,4 @@
-use herdr_nexus_translator::runner::{run, RunError};
+use capsule_nexus_translator::runner::{run, RunError};
 use std::ffi::OsString;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -9,7 +9,7 @@ fn shell(
     script: &str,
     timeout: Duration,
     limit: usize,
-) -> Result<herdr_nexus_translator::runner::Captured, RunError> {
+) -> Result<capsule_nexus_translator::runner::Captured, RunError> {
     run(
         Path::new("/bin/sh"),
         &[OsString::from("-c"), OsString::from(script)],

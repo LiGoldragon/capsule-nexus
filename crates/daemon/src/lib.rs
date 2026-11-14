@@ -1,10 +1,10 @@
 //! Daemon configuration lifecycle, independent of socket serving.
 
-use meta_signal_herdr_nexus::{BootstrapRefusal, Message, SocketPath};
+use meta_signal_capsule_nexus::{BootstrapRefusal, Message, SocketPath};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-pub use herdr_nexus_wire::deadline::DeadlineStream;
+pub use capsule_nexus_wire::deadline::DeadlineStream;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SocketPaths {
@@ -17,7 +17,7 @@ pub struct SocketPaths {
 impl From<&shared_translator::placement::Place> for SocketPaths {
     fn from(place: &shared_translator::placement::Place) -> Self {
         let directory = shared_translator::placement::runtime_path(place);
-        let names = herdr_nexus_wire::socket_names();
+        let names = capsule_nexus_wire::socket_names();
         Self {
             public: directory.join(names.public_nexus_socket.0),
             meta: directory.join(names.meta_nexus_socket.0),
@@ -66,14 +66,14 @@ pub struct Bootstrap {
     meta: OwnedListener,
     public: std::sync::Mutex<Option<OwnedListener>>,
     public_ready: std::sync::Condvar,
-    admission: herdr_nexus_wire::ValidAdmission,
+    admission: capsule_nexus_wire::ValidAdmission,
     translator_peer: BoundPeer,
 }
 
 impl Bootstrap {
     pub fn bind(
         place: &shared_translator::placement::Place,
-        admission: herdr_nexus_wire::ValidAdmission,
+        admission: capsule_nexus_wire::ValidAdmission,
         translator_peer: shared_translator::PeerIdentity,
     ) -> std::io::Result<Self> {
         let paths = SocketPaths::from(place);
@@ -91,8 +91,8 @@ impl Bootstrap {
 
     pub fn configure(
         &self,
-        setting: core_meta_herdr_nexus::CoreSet,
-    ) -> core_meta_herdr_nexus::Response {
+        setting: core_meta_capsule_nexus::CoreSet,
+    ) -> core_meta_capsule_nexus::Response {
         let mut staged = None;
         let response = self.store.configure(setting, || {
             let listener = OwnedListener::bind(self.paths.public.clone()).map_err(|error| {
@@ -124,7 +124,7 @@ impl Bootstrap {
     }
 
     pub fn serve_next_meta(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let (stream, _) = herdr_nexus_wire::accept_with_retry(
+        let (stream, _) = capsule_nexus_wire::accept_with_retry(
             &self.meta.listener,
             self.admission.retry_delay,
         )?;
@@ -138,7 +138,7 @@ impl Bootstrap {
             )
         })();
         if let Err(error) = exchange {
-            eprintln!("herdr Nexus meta connection failed: {error}");
+            eprintln!("Capsule Nexus meta connection failed: {error}");
         }
         Ok(())
     }
@@ -155,17 +155,17 @@ impl Bootstrap {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
         }
         loop {
-            let stream = herdr_nexus_wire::accept_with_retry(
+            let stream = capsule_nexus_wire::accept_with_retry(
                 &public
                 .as_ref()
                 .expect("public listener notified only after binding")
                 .listener,
                 self.admission.retry_delay,
             )?.0;
-            let actual = match herdr_nexus_wire::frame::peer_caller(&stream) {
+            let actual = match capsule_nexus_wire::frame::peer_caller(&stream) {
                 Ok(actual) => actual,
                 Err(error) => {
-                    eprintln!("herdr Nexus public peer lookup failed: {error}");
+                    eprintln!("Capsule Nexus public peer lookup failed: {error}");
                     continue;
                 }
             };
@@ -177,7 +177,7 @@ impl Bootstrap {
                     stream,
                     authority: PublicAuthority::Peer { peer_id, generation },
                 }),
-                None => eprintln!("herdr Nexus rejected unconfigured public peer"),
+                None => eprintln!("Capsule Nexus rejected unconfigured public peer"),
             }
         }
     }
@@ -186,7 +186,7 @@ impl Bootstrap {
         &self.paths
     }
 
-    pub fn admission(&self) -> herdr_nexus_wire::ValidAdmission {
+    pub fn admission(&self) -> capsule_nexus_wire::ValidAdmission {
         self.admission
     }
 }
@@ -237,7 +237,7 @@ fn require_peer(
     stream: &std::os::unix::net::UnixStream,
     expected: &BoundPeer,
 ) -> std::io::Result<()> {
-    let actual = herdr_nexus_wire::frame::peer_caller(stream)
+    let actual = capsule_nexus_wire::frame::peer_caller(stream)
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     if expected.matches(&actual) {
         Ok(())
@@ -254,7 +254,7 @@ fn require_peer(
 pub fn serve_meta_once<S>(
     stream: &mut S,
     capacity: signal::FrameCapacity,
-    configure: impl FnOnce(core_meta_herdr_nexus::CoreSet) -> core_meta_herdr_nexus::Response,
+    configure: impl FnOnce(core_meta_capsule_nexus::CoreSet) -> core_meta_capsule_nexus::Response,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     S: std::io::Read + std::io::Write,
@@ -262,13 +262,13 @@ where
     use signal::{FrameReading, FrameWriting, Restorable, Signal, Signalizable};
     let frame = stream.read_frame(capacity)?;
     let query =
-        Signal::<herdr_nexus_wire::meta_call::Query>::from(Vec::<u8>::from(frame)).restore()?;
+        Signal::<capsule_nexus_wire::meta_call::Query>::from(Vec::<u8>::from(frame)).restore()?;
     let response = match query {
-        herdr_nexus_wire::meta_call::Query::Call(call) => {
+        capsule_nexus_wire::meta_call::Query::Call(call) => {
             let response = match call.input.0 {
-                core_meta_herdr_nexus::Query::Configure(setting) => configure(setting),
+                core_meta_capsule_nexus::Query::Configure(setting) => configure(setting),
             };
-            herdr_nexus_wire::meta_call::Response::Answered(herdr_nexus_wire::meta_payload::Output(
+            capsule_nexus_wire::meta_call::Response::Answered(capsule_nexus_wire::meta_payload::Output(
                 response,
             ))
         }
@@ -287,16 +287,16 @@ pub fn serve_public_once<S, H>(
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     S: std::io::Read + std::io::Write,
-    H: FnOnce(signal_herdr_nexus::Query) -> signal_herdr_nexus::Response,
+    H: FnOnce(signal_capsule_nexus::Query) -> signal_capsule_nexus::Response,
 {
     use signal::{FrameReading, FrameWriting, Restorable, Signal, Signalizable};
     let frame = stream.read_frame(capacity)?;
     let query =
-        Signal::<herdr_nexus_wire::public_call::Query>::from(Vec::<u8>::from(frame)).restore()?;
+        Signal::<capsule_nexus_wire::public_call::Query>::from(Vec::<u8>::from(frame)).restore()?;
     let response = match query {
-        herdr_nexus_wire::public_call::Query::Call(call) => {
-            herdr_nexus_wire::public_call::Response::Answered(
-                herdr_nexus_wire::public_payload::Output(handle(call.input.0)),
+        capsule_nexus_wire::public_call::Query::Call(call) => {
+            capsule_nexus_wire::public_call::Response::Answered(
+                capsule_nexus_wire::public_payload::Output(handle(call.input.0)),
             )
         }
     };
@@ -319,21 +319,21 @@ pub struct Dispatcher {
 /// The complete public operation decision: answer once or establish the
 /// dedicated subscription stream. Subscribe has no parallel one-shot path.
 pub enum PublicDispatch {
-    Answered(signal_herdr_nexus::Response),
-    Subscribe(signal_herdr_nexus::Session),
+    Answered(signal_capsule_nexus::Response),
+    Subscribe(signal_capsule_nexus::Session),
 }
 
 pub trait ExternalEmitter: Send + Sync {
     fn emit(
         &self,
         configuration: &ReadyCoreConfiguration,
-        herdr: emission_herdr_nexus::Herdr,
+        herdr: emission_capsule_nexus::Herdr,
     ) -> EmissionResult;
 }
 
 pub enum EmissionResult {
-    External(emission_herdr_nexus::ExternalOutcome),
-    Unavailable(signal_herdr_nexus::TransportRefusal),
+    External(emission_capsule_nexus::ExternalOutcome),
+    Unavailable(signal_capsule_nexus::TransportRefusal),
 }
 
 struct SocketEmitter {
@@ -341,18 +341,18 @@ struct SocketEmitter {
 }
 
 struct DispatcherState {
-    core: herdr_nexus_core::Core<herdr_nexus_core::InMemory>,
-    principals: std::collections::HashMap<signal_herdr_nexus::Pane, shared_translator::Principal>,
-    reserved: std::collections::HashMap<signal_herdr_nexus::Pane, u64>,
-    revisions: std::collections::HashMap<signal_herdr_nexus::Pane, u64>,
+    core: capsule_nexus_core::Core<capsule_nexus_core::InMemory>,
+    principals: std::collections::HashMap<signal_capsule_nexus::Pane, shared_translator::Principal>,
+    reserved: std::collections::HashMap<signal_capsule_nexus::Pane, u64>,
+    revisions: std::collections::HashMap<signal_capsule_nexus::Pane, u64>,
     next_reservation: u64,
-    instance_id: signal_herdr_nexus::InstanceId,
+    instance_id: signal_capsule_nexus::InstanceId,
     next_creation_sequence: i64,
 }
 
 #[derive(Default)]
 struct SubscriptionHub {
-    sessions: std::collections::HashMap<(shared_translator::Principal, signal_herdr_nexus::Session), SessionSubscription>,
+    sessions: std::collections::HashMap<(shared_translator::Principal, signal_capsule_nexus::Session), SessionSubscription>,
 }
 
 struct SessionSubscription {
@@ -362,7 +362,7 @@ struct SessionSubscription {
 
 struct Subscriber {
     queue: Arc<SubscriberQueue>,
-    delivered: std::collections::HashMap<signal_herdr_nexus::Pane, signal_herdr_nexus::State>,
+    delivered: std::collections::HashMap<signal_capsule_nexus::Pane, signal_capsule_nexus::State>,
 }
 
 struct SubscriberQueue {
@@ -371,13 +371,13 @@ struct SubscriberQueue {
 }
 
 struct SubscriberQueueState {
-    pending: std::collections::VecDeque<signal_herdr_nexus::Response>,
+    pending: std::collections::VecDeque<signal_capsule_nexus::Response>,
     capacity: usize,
     closed: bool,
 }
 
 enum QueueNext {
-    Response(signal_herdr_nexus::Response),
+    Response(signal_capsule_nexus::Response),
     Quiet,
     Closed,
 }
@@ -394,7 +394,7 @@ impl SubscriberQueue {
         }
     }
 
-    fn enqueue(&self, response: signal_herdr_nexus::Response) -> bool {
+    fn enqueue(&self, response: signal_capsule_nexus::Response) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if state.closed || state.pending.len() >= state.capacity {
             state.closed = true;
@@ -449,29 +449,29 @@ impl SubscriberQueue {
 }
 
 fn operation(
-    query: signal_herdr_nexus::Query,
-) -> herdr_nexus_core::generated::operation::Operation {
-    use herdr_nexus_core::generated::operation::{
+    query: signal_capsule_nexus::Query,
+) -> capsule_nexus_core::generated::operation::Operation {
+    use capsule_nexus_core::generated::operation::{
         Operation, Pressing_Data, Prompting_Data, Starting_Data,
     };
     match query {
-        signal_herdr_nexus::Query::Create(workspace) => Operation::Creating(workspace),
-        signal_herdr_nexus::Query::Start(start) => Operation::Starting(Starting_Data {
+        signal_capsule_nexus::Query::Create(workspace) => Operation::Creating(workspace),
+        signal_capsule_nexus::Query::Start(start) => Operation::Starting(Starting_Data {
             pane: start.pane,
             command: start.command,
             label: start.label,
         }),
-        signal_herdr_nexus::Query::Prompt(prompt) => Operation::Prompting(Prompting_Data {
+        signal_capsule_nexus::Query::Prompt(prompt) => Operation::Prompting(Prompting_Data {
             pane: prompt.pane,
             text: prompt.text,
         }),
-        signal_herdr_nexus::Query::Press(press) => Operation::Pressing(Pressing_Data {
+        signal_capsule_nexus::Query::Press(press) => Operation::Pressing(Pressing_Data {
             pane: press.pane,
             keys: press.keys,
         }),
-        signal_herdr_nexus::Query::Close(pane) => Operation::Closing(pane),
-        signal_herdr_nexus::Query::List(session) => Operation::Listing(session),
-        signal_herdr_nexus::Query::Subscribe(session) => Operation::Subscribing(session),
+        signal_capsule_nexus::Query::Close(pane) => Operation::Closing(pane),
+        signal_capsule_nexus::Query::List(session) => Operation::Listing(session),
+        signal_capsule_nexus::Query::Subscribe(session) => Operation::Subscribing(session),
     }
 }
 
@@ -479,11 +479,11 @@ impl Dispatcher {
     pub fn new(
         paths: &SocketPaths,
         configuration: Arc<ConfigurationStore>,
-        instance_id: signal_herdr_nexus::InstanceId,
+        instance_id: signal_capsule_nexus::InstanceId,
     ) -> Self {
         Self {
             state: std::sync::Mutex::new(DispatcherState {
-                core: herdr_nexus_core::Core::new(herdr_nexus_core::InMemory::default()),
+                core: capsule_nexus_core::Core::new(capsule_nexus_core::InMemory::default()),
                 principals: std::collections::HashMap::new(),
                 reserved: std::collections::HashMap::new(),
                 revisions: std::collections::HashMap::new(),
@@ -503,33 +503,33 @@ impl Dispatcher {
     pub fn dispatch_as(
         &self,
         principal: shared_translator::Principal,
-        query: signal_herdr_nexus::Query,
+        query: signal_capsule_nexus::Query,
         configuration: Arc<ReadyCoreConfiguration>,
     ) -> PublicDispatch {
-        use emission_herdr_nexus::{
+        use emission_capsule_nexus::{
             AgentPrompt_Data, AgentStart_Data, Herdr, SendKeys_Data, Verb, WorkspaceCreate_Data,
         };
-        use herdr_nexus_core::generated::operation::Operation;
-        use signal_herdr_nexus::Response;
+        use capsule_nexus_core::generated::operation::Operation;
+        use signal_capsule_nexus::Response;
         let response = match operation(query) {
             Operation::Creating(workspace) => {
                 let creation_id = {
                     let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                    let creation_id = signal_herdr_nexus::CreationId {
+                    let creation_id = signal_capsule_nexus::CreationId {
                         instance_id: state.instance_id.clone(),
-                        sequence: signal_herdr_nexus::Sequence(state.next_creation_sequence),
+                        sequence: signal_capsule_nexus::Sequence(state.next_creation_sequence),
                     };
                     let Some(next) = state.next_creation_sequence.checked_add(1) else {
-                        return PublicDispatch::Answered(Response::Created(signal_herdr_nexus::Outcome::StoreRefused(
-                            signal_herdr_nexus::StoreRefusal {
-                                memory_refusal: signal_herdr_nexus::MemoryRefusal(
-                                    signal_herdr_nexus::Message("creation sequence exhausted".into()),
+                        return PublicDispatch::Answered(Response::Created(signal_capsule_nexus::Outcome::StoreRefused(
+                            signal_capsule_nexus::StoreRefusal {
+                                memory_refusal: signal_capsule_nexus::MemoryRefusal(
+                                    signal_capsule_nexus::Message("creation sequence exhausted".into()),
                                 ),
-                                store_phase: signal_herdr_nexus::StorePhase::BeforeEmission,
+                                store_phase: signal_capsule_nexus::StorePhase::BeforeEmission,
                             },
                         )));
                     };
-                    let pending = herdr_nexus_core::generated::memory::PendingCreation {
+                    let pending = capsule_nexus_core::generated::memory::PendingCreation {
                         creation_id: creation_id.clone(),
                         principal: principal.clone(),
                         workspace: workspace.clone(),
@@ -553,7 +553,7 @@ impl Dispatcher {
                 );
                 let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
                 let outcome = state.core.create(creation_id, created_result(external));
-                if let signal_herdr_nexus::Outcome::Created(pane) = &outcome {
+                if let signal_capsule_nexus::Outcome::Created(pane) = &outcome {
                     state.revisions.insert(pane.clone(), 1);
                     state.principals.insert(pane.clone(), principal);
                 }
@@ -572,7 +572,7 @@ impl Dispatcher {
                         verb: Verb::AgentStart(AgentStart_Data {
                             pane_id: start.pane.pane_id.clone(),
                             command: start.command,
-                            timeout: emission_herdr_nexus::Timeout(
+                            timeout: emission_capsule_nexus::Timeout(
                                 i64::try_from(configuration.start_timeout.as_millis())
                                     .expect("validated i64 millisecond timeout"),
                             ),
@@ -586,8 +586,8 @@ impl Dispatcher {
                     .start(pane.clone(), command, start.label, started_result(external));
                 if matches!(
                     outcome,
-                    signal_herdr_nexus::Outcome::Done
-                        | signal_herdr_nexus::Outcome::Uncertain
+                    signal_capsule_nexus::Outcome::Done
+                        | signal_capsule_nexus::Outcome::Uncertain
                 ) {
                     bump_revision(&mut state.revisions, pane);
                 }
@@ -614,8 +614,8 @@ impl Dispatcher {
                 let outcome = state.core.prompt(pane.clone(), text, done_result(external));
                 if matches!(
                     outcome,
-                    signal_herdr_nexus::Outcome::Done
-                        | signal_herdr_nexus::Outcome::Uncertain
+                    signal_capsule_nexus::Outcome::Done
+                        | signal_capsule_nexus::Outcome::Uncertain
                 ) {
                     bump_revision(&mut state.revisions, pane);
                 }
@@ -642,8 +642,8 @@ impl Dispatcher {
                 let outcome = state.core.press(pane.clone(), keys, done_result(external));
                 if matches!(
                     outcome,
-                    signal_herdr_nexus::Outcome::Done
-                        | signal_herdr_nexus::Outcome::Uncertain
+                    signal_capsule_nexus::Outcome::Done
+                        | signal_capsule_nexus::Outcome::Uncertain
                 ) {
                     bump_revision(&mut state.revisions, pane);
                 }
@@ -664,16 +664,16 @@ impl Dispatcher {
                 let mut state = self.finish_reservation(&pane, reservation);
                 let externally_closed = matches!(
                     &external,
-                    EmissionResult::External(emission_herdr_nexus::ExternalOutcome::Done)
+                    EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Done)
                 ) || is_absent_close(&external);
                 if externally_closed {
                     self.publish_closed(&principal, &pane);
                 }
                 let outcome = state.core.close(pane.clone(), closed_result(external));
-                if outcome == signal_herdr_nexus::Outcome::Done {
+                if outcome == signal_capsule_nexus::Outcome::Done {
                     state.revisions.remove(&pane);
                     state.principals.remove(&pane);
-                } else if outcome == signal_herdr_nexus::Outcome::Uncertain {
+                } else if outcome == signal_capsule_nexus::Outcome::Uncertain {
                     bump_revision(&mut state.revisions, pane);
                 }
                 Response::Closed(outcome)
@@ -693,7 +693,7 @@ impl Dispatcher {
                         state.principals.get(&owned.pane) == Some(&principal)
                     }) || pending.iter().any(|creation| creation.principal == principal);
                     if !owns_any {
-                        return PublicDispatch::Answered(Response::Listed(signal_herdr_nexus::Outcome::Listed(Vec::new())));
+                        return PublicDispatch::Answered(Response::Listed(signal_capsule_nexus::Outcome::Listed(Vec::new())));
                     }
                     (state.revisions.clone(), pending)
                 };
@@ -737,7 +737,7 @@ impl Dispatcher {
                 let external = protect_newer_state(&state, &session, &captured, external);
                 let outcome = state.core.list(session.clone(), external);
                 let outcome = filter_listing(outcome, &principal, &state.principals);
-                if matches!(outcome, signal_herdr_nexus::Outcome::Listed(_)) {
+                if matches!(outcome, signal_capsule_nexus::Outcome::Listed(_)) {
                     if let Ok(owned) = state.core.owned_in_session(&session) {
                         for owned in owned {
                             bump_revision(&mut state.revisions, owned.pane);
@@ -761,8 +761,8 @@ impl Dispatcher {
             .peer_grant_is_current(caller, peer_id, generation)
     }
 
-    fn reserve(&self, principal: &shared_translator::Principal, pane: &signal_herdr_nexus::Pane) -> Result<u64, signal_herdr_nexus::Outcome> {
-        use signal_herdr_nexus::{AttemptInProgress, Outcome};
+    fn reserve(&self, principal: &shared_translator::Principal, pane: &signal_capsule_nexus::Pane) -> Result<u64, signal_capsule_nexus::Outcome> {
+        use signal_capsule_nexus::{AttemptInProgress, Outcome};
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         state.core.preflight_owned(pane)?;
         if state.principals.get(pane) != Some(principal) {
@@ -779,7 +779,7 @@ impl Dispatcher {
 
     fn finish_reservation(
         &self,
-        pane: &signal_herdr_nexus::Pane,
+        pane: &signal_capsule_nexus::Pane,
         token: u64,
     ) -> std::sync::MutexGuard<'_, DispatcherState> {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -795,7 +795,7 @@ impl Dispatcher {
     pub fn subscribe(
         self: &Arc<Self>,
         stream: std::os::unix::net::UnixStream,
-        session: signal_herdr_nexus::Session,
+        session: signal_capsule_nexus::Session,
         configuration: Arc<ReadyCoreConfiguration>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.subscribe_as(
@@ -812,7 +812,7 @@ impl Dispatcher {
         self: &Arc<Self>,
         stream: std::os::unix::net::UnixStream,
         principal: shared_translator::Principal,
-        session: signal_herdr_nexus::Session,
+        session: signal_capsule_nexus::Session,
         configuration: Arc<ReadyCoreConfiguration>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.subscribe_bound(stream, principal, None, session, configuration)
@@ -823,15 +823,15 @@ impl Dispatcher {
         stream: std::os::unix::net::UnixStream,
         principal: shared_translator::Principal,
         peer_grant: Option<(shared_translator::PeerId, u64)>,
-        session: signal_herdr_nexus::Session,
+        session: signal_capsule_nexus::Session,
         configuration: Arc<ReadyCoreConfiguration>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        use signal_herdr_nexus::{Changed_Data, Response};
+        use signal_capsule_nexus::{Changed_Data, Response};
         let (acknowledgement, current) = {
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
             let acknowledgement = Response::Subscribed(state.core.subscribe(
                 session.clone(),
-                herdr_nexus_core::ExternalResult::Succeeded(()),
+                capsule_nexus_core::ExternalResult::Succeeded(()),
             ));
             let current = state
                 .core
@@ -926,8 +926,8 @@ impl Dispatcher {
         Ok(())
     }
 
-    fn poll_subscription(self: Arc<Self>, principal: shared_translator::Principal, session: signal_herdr_nexus::Session, generation: u64) {
-        use signal_herdr_nexus::{Changed_Data, Outcome, Query, Response};
+    fn poll_subscription(self: Arc<Self>, principal: shared_translator::Principal, session: signal_capsule_nexus::Session, generation: u64) {
+        use signal_capsule_nexus::{Changed_Data, Outcome, Query, Response};
         loop {
             let Some(configuration) = self.configuration.snapshot() else {
                 return;
@@ -1029,13 +1029,13 @@ impl Dispatcher {
     fn execute(
         &self,
         configuration: &ReadyCoreConfiguration,
-        herdr: emission_herdr_nexus::Herdr,
+        herdr: emission_capsule_nexus::Herdr,
     ) -> EmissionResult {
         self.emitter.emit(configuration, herdr)
     }
 
-    fn publish_closed(&self, principal: &shared_translator::Principal, pane: &signal_herdr_nexus::Pane) {
-        use signal_herdr_nexus::{Changed_Data, Response, State};
+    fn publish_closed(&self, principal: &shared_translator::Principal, pane: &signal_capsule_nexus::Pane) {
+        use signal_capsule_nexus::{Changed_Data, Response, State};
         let mut hub = self
             .subscriptions
             .lock()
@@ -1063,9 +1063,9 @@ impl ExternalEmitter for SocketEmitter {
     fn emit(
         &self,
         configuration: &ReadyCoreConfiguration,
-        herdr: emission_herdr_nexus::Herdr,
+        herdr: emission_capsule_nexus::Herdr,
     ) -> EmissionResult {
-        use herdr_nexus_wire::transport_types::{Kind, Lane};
+        use capsule_nexus_wire::transport_types::{Kind, Lane};
         use signal::{ByteViewable, Restorable, Signal, Signalizable};
         let stream = match std::os::unix::net::UnixStream::connect(&self.translator_socket) {
             Ok(stream) => stream,
@@ -1079,16 +1079,16 @@ impl ExternalEmitter for SocketEmitter {
             Ok(stream) => stream,
             Err(error) => return unavailable_transport(&self.translator_socket, error.to_string()),
         };
-        let request = emission_herdr_nexus::Query::Emit(herdr);
+        let request = emission_capsule_nexus::Query::Emit(herdr);
         let request = match request.signalize() {
             Ok(request) => request,
             Err(error) => {
                 return unavailable_transport(&self.translator_socket, format!("{error:?}"))
             }
         };
-        if let Err(failure) = herdr_nexus_wire::frame::write_frame_witness(
+        if let Err(failure) = capsule_nexus_wire::frame::write_frame_witness(
             &mut output,
-            &herdr_nexus_wire::frame::Frame {
+            &capsule_nexus_wire::frame::Frame {
                 lane: Lane::EmissionSignal,
                 kind: Kind::Request,
                 payload: request.bytes().to_vec(),
@@ -1105,7 +1105,7 @@ impl ExternalEmitter for SocketEmitter {
         }
         drop(output);
         let result = (|| -> Result<_, Box<dyn std::error::Error>> {
-            let body = herdr_nexus_wire::frame::read_frame_after_idle(
+            let body = capsule_nexus_wire::frame::read_frame_after_idle(
                 response_stream,
                 configuration.transport_timeout,
                 configuration.frame_capacity_bytes,
@@ -1115,18 +1115,18 @@ impl ExternalEmitter for SocketEmitter {
                 return Err("translator returned a non-answer emission frame".into());
             }
             let response =
-                Signal::<emission_herdr_nexus::Response>::from(body.payload).restore()?;
+                Signal::<emission_capsule_nexus::Response>::from(body.payload).restore()?;
             match response {
-                emission_herdr_nexus::Response::Emitted(outcome) => Ok(outcome),
+                emission_capsule_nexus::Response::Emitted(outcome) => Ok(outcome),
             }
         })();
-        EmissionResult::External(result.unwrap_or(emission_herdr_nexus::ExternalOutcome::Uncertain))
+        EmissionResult::External(result.unwrap_or(emission_capsule_nexus::ExternalOutcome::Uncertain))
     }
 }
 
 fn bump_revision(
-    revisions: &mut std::collections::HashMap<signal_herdr_nexus::Pane, u64>,
-    pane: signal_herdr_nexus::Pane,
+    revisions: &mut std::collections::HashMap<signal_capsule_nexus::Pane, u64>,
+    pane: signal_capsule_nexus::Pane,
 ) {
     let next = revisions
         .get(&pane)
@@ -1139,60 +1139,60 @@ fn bump_revision(
 
 fn protect_newer_state(
     state: &DispatcherState,
-    session: &signal_herdr_nexus::Session,
-    captured: &std::collections::HashMap<signal_herdr_nexus::Pane, u64>,
-    external: herdr_nexus_core::ExternalResult<Vec<emission_herdr_nexus::PaneObservation>>,
-) -> herdr_nexus_core::ExternalResult<Vec<emission_herdr_nexus::PaneObservation>> {
-    let herdr_nexus_core::ExternalResult::Succeeded(mut observed) = external else {
+    session: &signal_capsule_nexus::Session,
+    captured: &std::collections::HashMap<signal_capsule_nexus::Pane, u64>,
+    external: capsule_nexus_core::ExternalResult<Vec<emission_capsule_nexus::PaneObservation>>,
+) -> capsule_nexus_core::ExternalResult<Vec<emission_capsule_nexus::PaneObservation>> {
+    let capsule_nexus_core::ExternalResult::Succeeded(mut observed) = external else {
         return external;
     };
     let Ok(owned) = state.core.owned_in_session(session) else {
-        return herdr_nexus_core::ExternalResult::Succeeded(observed);
+        return capsule_nexus_core::ExternalResult::Succeeded(observed);
     };
     for current in owned {
         let changed = captured.get(&current.pane) != state.revisions.get(&current.pane)
             || state.reserved.contains_key(&current.pane);
         if changed {
             observed.retain(|item| item.pane != current.pane);
-            observed.push(emission_herdr_nexus::PaneObservation {
+            observed.push(emission_capsule_nexus::PaneObservation {
                 pane: current.pane,
                 state: current.state,
             });
         }
     }
-    herdr_nexus_core::ExternalResult::Succeeded(observed)
+    capsule_nexus_core::ExternalResult::Succeeded(observed)
 }
 
 fn filter_listing(
-    outcome: signal_herdr_nexus::Outcome,
+    outcome: signal_capsule_nexus::Outcome,
     principal: &shared_translator::Principal,
-    principals: &std::collections::HashMap<signal_herdr_nexus::Pane, shared_translator::Principal>,
-) -> signal_herdr_nexus::Outcome {
+    principals: &std::collections::HashMap<signal_capsule_nexus::Pane, shared_translator::Principal>,
+) -> signal_capsule_nexus::Outcome {
     match outcome {
-        signal_herdr_nexus::Outcome::Listed(mut known) => {
+        signal_capsule_nexus::Outcome::Listed(mut known) => {
             known.retain(|item| principals.get(&item.pane) == Some(principal));
-            signal_herdr_nexus::Outcome::Listed(known)
+            signal_capsule_nexus::Outcome::Listed(known)
         }
         other => other,
     }
 }
 
 fn unavailable_transport(path: &std::path::Path, message: String) -> EmissionResult {
-    EmissionResult::Unavailable(signal_herdr_nexus::TransportRefusal {
-        socket_path: signal_herdr_nexus::SocketPath(path.display().to_string()),
-        message: signal_herdr_nexus::Message(message),
+    EmissionResult::Unavailable(signal_capsule_nexus::TransportRefusal {
+        socket_path: signal_capsule_nexus::SocketPath(path.display().to_string()),
+        message: signal_capsule_nexus::Message(message),
     })
 }
 
 fn write_subscription_change(
     stream: &std::os::unix::net::UnixStream,
     configuration: &ReadyCoreConfiguration,
-    change: &signal_herdr_nexus::Response,
+    change: &signal_capsule_nexus::Response,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use signal::{FrameWriting, Signalizable};
     let mut output = DeadlineStream::new(stream.try_clone()?, configuration.transport_timeout)?;
-    let change = herdr_nexus_wire::public_call::Response::Answered(
-        herdr_nexus_wire::public_payload::Output(change.clone()),
+    let change = capsule_nexus_wire::public_call::Response::Answered(
+        capsule_nexus_wire::public_payload::Output(change.clone()),
     );
     output.write_frame(
         &change.signalize()?,
@@ -1216,32 +1216,32 @@ fn subscription_peer_closed(stream: &std::os::unix::net::UnixStream) -> bool {
     }
 }
 
-fn done_result(outcome: EmissionResult) -> herdr_nexus_core::ExternalResult<()> {
+fn done_result(outcome: EmissionResult) -> capsule_nexus_core::ExternalResult<()> {
     match outcome {
-        EmissionResult::External(emission_herdr_nexus::ExternalOutcome::Done) => {
-            herdr_nexus_core::ExternalResult::Succeeded(())
+        EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Done) => {
+            capsule_nexus_core::ExternalResult::Succeeded(())
         }
-        EmissionResult::External(emission_herdr_nexus::ExternalOutcome::Refused(refusal)) => {
-            herdr_nexus_core::ExternalResult::Refused(refusal)
+        EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Refused(refusal)) => {
+            capsule_nexus_core::ExternalResult::Refused(refusal)
         }
         EmissionResult::Unavailable(refusal) => {
-            herdr_nexus_core::ExternalResult::Unavailable(refusal)
+            capsule_nexus_core::ExternalResult::Unavailable(refusal)
         }
-        _ => herdr_nexus_core::ExternalResult::Uncertain,
+        _ => capsule_nexus_core::ExternalResult::Uncertain,
     }
 }
 
 fn is_absent_close(outcome: &EmissionResult) -> bool {
     matches!(
         outcome,
-        EmissionResult::External(emission_herdr_nexus::ExternalOutcome::Refused(refusal))
+        EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Refused(refusal))
             if refusal.error_code.0 == "pane_not_found"
     )
 }
 
-fn closed_result(outcome: EmissionResult) -> herdr_nexus_core::ExternalResult<()> {
+fn closed_result(outcome: EmissionResult) -> capsule_nexus_core::ExternalResult<()> {
     if is_absent_close(&outcome) {
-        herdr_nexus_core::ExternalResult::Succeeded(())
+        capsule_nexus_core::ExternalResult::Succeeded(())
     } else {
         done_result(outcome)
     }
@@ -1249,105 +1249,105 @@ fn closed_result(outcome: EmissionResult) -> herdr_nexus_core::ExternalResult<()
 
 fn started_result(
     outcome: EmissionResult,
-) -> herdr_nexus_core::ExternalResult<signal_herdr_nexus::State> {
+) -> capsule_nexus_core::ExternalResult<signal_capsule_nexus::State> {
     match outcome {
-        EmissionResult::External(emission_herdr_nexus::ExternalOutcome::Started(state)) => {
-            herdr_nexus_core::ExternalResult::Succeeded(state)
+        EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Started(state)) => {
+            capsule_nexus_core::ExternalResult::Succeeded(state)
         }
-        EmissionResult::External(emission_herdr_nexus::ExternalOutcome::Refused(refusal)) => {
-            herdr_nexus_core::ExternalResult::Refused(refusal)
+        EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Refused(refusal)) => {
+            capsule_nexus_core::ExternalResult::Refused(refusal)
         }
         EmissionResult::Unavailable(refusal) => {
-            herdr_nexus_core::ExternalResult::Unavailable(refusal)
+            capsule_nexus_core::ExternalResult::Unavailable(refusal)
         }
-        _ => herdr_nexus_core::ExternalResult::Uncertain,
+        _ => capsule_nexus_core::ExternalResult::Uncertain,
     }
 }
 
 fn created_result(
     outcome: EmissionResult,
-) -> herdr_nexus_core::ExternalResult<signal_herdr_nexus::Pane> {
+) -> capsule_nexus_core::ExternalResult<signal_capsule_nexus::Pane> {
     match outcome {
-        EmissionResult::External(emission_herdr_nexus::ExternalOutcome::Created(pane)) => {
-            herdr_nexus_core::ExternalResult::Succeeded(pane)
+        EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Created(pane)) => {
+            capsule_nexus_core::ExternalResult::Succeeded(pane)
         }
-        EmissionResult::External(emission_herdr_nexus::ExternalOutcome::Refused(refusal)) => {
-            herdr_nexus_core::ExternalResult::Refused(refusal)
+        EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Refused(refusal)) => {
+            capsule_nexus_core::ExternalResult::Refused(refusal)
         }
         EmissionResult::Unavailable(refusal) => {
-            herdr_nexus_core::ExternalResult::Unavailable(refusal)
+            capsule_nexus_core::ExternalResult::Unavailable(refusal)
         }
-        _ => herdr_nexus_core::ExternalResult::Uncertain,
+        _ => capsule_nexus_core::ExternalResult::Uncertain,
     }
 }
 
 fn pane_listing_result(
     outcome: EmissionResult,
 ) -> Result<
-    Vec<emission_herdr_nexus::PaneListing>,
-    herdr_nexus_core::ExternalResult<Vec<emission_herdr_nexus::PaneObservation>>,
+    Vec<emission_capsule_nexus::PaneListing>,
+    capsule_nexus_core::ExternalResult<Vec<emission_capsule_nexus::PaneObservation>>,
 > {
     match outcome {
-        EmissionResult::External(emission_herdr_nexus::ExternalOutcome::Panes(observed)) => Ok(observed),
-        EmissionResult::External(emission_herdr_nexus::ExternalOutcome::Refused(refusal)) => {
-            Err(herdr_nexus_core::ExternalResult::Refused(refusal))
+        EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Panes(observed)) => Ok(observed),
+        EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Refused(refusal)) => {
+            Err(capsule_nexus_core::ExternalResult::Refused(refusal))
         }
         EmissionResult::Unavailable(refusal) => {
-            Err(herdr_nexus_core::ExternalResult::Unavailable(refusal))
+            Err(capsule_nexus_core::ExternalResult::Unavailable(refusal))
         }
-        _ => Err(herdr_nexus_core::ExternalResult::Uncertain),
+        _ => Err(capsule_nexus_core::ExternalResult::Uncertain),
     }
 }
 
 fn agent_listing_result(
     outcome: EmissionResult,
 ) -> Result<
-    Vec<emission_herdr_nexus::AgentListing>,
-    herdr_nexus_core::ExternalResult<Vec<emission_herdr_nexus::PaneObservation>>,
+    Vec<emission_capsule_nexus::AgentListing>,
+    capsule_nexus_core::ExternalResult<Vec<emission_capsule_nexus::PaneObservation>>,
 > {
     match outcome {
-        EmissionResult::External(emission_herdr_nexus::ExternalOutcome::Agents(observed)) => Ok(observed),
-        EmissionResult::External(emission_herdr_nexus::ExternalOutcome::Refused(refusal)) => {
-            Err(herdr_nexus_core::ExternalResult::Refused(refusal))
+        EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Agents(observed)) => Ok(observed),
+        EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Refused(refusal)) => {
+            Err(capsule_nexus_core::ExternalResult::Refused(refusal))
         }
         EmissionResult::Unavailable(refusal) => {
-            Err(herdr_nexus_core::ExternalResult::Unavailable(refusal))
+            Err(capsule_nexus_core::ExternalResult::Unavailable(refusal))
         }
-        _ => Err(herdr_nexus_core::ExternalResult::Uncertain),
+        _ => Err(capsule_nexus_core::ExternalResult::Uncertain),
     }
 }
 
 fn workspace_listing_result(
     outcome: EmissionResult,
 ) -> Result<
-    Vec<emission_herdr_nexus::WorkspaceListing>,
-    herdr_nexus_core::ExternalResult<Vec<emission_herdr_nexus::PaneObservation>>,
+    Vec<emission_capsule_nexus::WorkspaceListing>,
+    capsule_nexus_core::ExternalResult<Vec<emission_capsule_nexus::PaneObservation>>,
 > {
     match outcome {
-        EmissionResult::External(emission_herdr_nexus::ExternalOutcome::Workspaces(observed)) => {
+        EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Workspaces(observed)) => {
             Ok(observed)
         }
-        EmissionResult::External(emission_herdr_nexus::ExternalOutcome::Refused(refusal)) => {
-            Err(herdr_nexus_core::ExternalResult::Refused(refusal))
+        EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Refused(refusal)) => {
+            Err(capsule_nexus_core::ExternalResult::Refused(refusal))
         }
         EmissionResult::Unavailable(refusal) => {
-            Err(herdr_nexus_core::ExternalResult::Unavailable(refusal))
+            Err(capsule_nexus_core::ExternalResult::Unavailable(refusal))
         }
-        _ => Err(herdr_nexus_core::ExternalResult::Uncertain),
+        _ => Err(capsule_nexus_core::ExternalResult::Uncertain),
     }
 }
 
 fn adopt_pending_creations(
     state: &mut DispatcherState,
-    pending: &[herdr_nexus_core::generated::memory::PendingCreation],
-    panes: &[emission_herdr_nexus::PaneListing],
-    workspaces: &[emission_herdr_nexus::WorkspaceListing],
+    pending: &[capsule_nexus_core::generated::memory::PendingCreation],
+    panes: &[emission_capsule_nexus::PaneListing],
+    workspaces: &[emission_capsule_nexus::WorkspaceListing],
 ) {
     for creation in pending {
         let matching_workspaces: Vec<_> = workspaces
             .iter()
             .filter(|workspace| {
-                emission_herdr_nexus::managed_creation_id(&workspace.workspace_label).as_ref()
+                emission_capsule_nexus::managed_creation_id(&workspace.workspace_label).as_ref()
                     == Some(&creation.creation_id)
             })
             .collect();
@@ -1365,9 +1365,9 @@ fn adopt_pending_creations(
         if matches!(
             state.core.create(
                 creation.creation_id.clone(),
-                herdr_nexus_core::ExternalResult::Succeeded(pane.clone()),
+                capsule_nexus_core::ExternalResult::Succeeded(pane.clone()),
             ),
-            signal_herdr_nexus::Outcome::Created(_)
+            signal_capsule_nexus::Outcome::Created(_)
         ) {
             state.principals.insert(pane.clone(), creation.principal.clone());
             state.revisions.insert(pane, 1);
@@ -1376,12 +1376,12 @@ fn adopt_pending_creations(
 }
 
 fn join_listings(
-    panes: Vec<emission_herdr_nexus::PaneListing>,
+    panes: Vec<emission_capsule_nexus::PaneListing>,
     agents: Result<
-        Vec<emission_herdr_nexus::AgentListing>,
-        herdr_nexus_core::ExternalResult<Vec<emission_herdr_nexus::PaneObservation>>,
+        Vec<emission_capsule_nexus::AgentListing>,
+        capsule_nexus_core::ExternalResult<Vec<emission_capsule_nexus::PaneObservation>>,
     >,
-) -> herdr_nexus_core::ExternalResult<Vec<emission_herdr_nexus::PaneObservation>> {
+) -> capsule_nexus_core::ExternalResult<Vec<emission_capsule_nexus::PaneObservation>> {
     use std::collections::{HashMap, HashSet};
     let agents = match agents {
         Ok(agents) => agents,
@@ -1397,28 +1397,28 @@ fn join_listings(
         })
         .collect();
     if panes_by_id.len() != panes.len() {
-        return herdr_nexus_core::ExternalResult::Uncertain;
+        return capsule_nexus_core::ExternalResult::Uncertain;
     }
     let mut agents_by_id = HashMap::new();
     for agent in agents {
         let Some(pane) = panes_by_id.get(&agent.pane) else {
-            return herdr_nexus_core::ExternalResult::Uncertain;
+            return capsule_nexus_core::ExternalResult::Uncertain;
         };
         if agent.terminal_id.0 != pane.terminal_id.0
             || agent.workspace_id.0 != pane.workspace_id.0
             || agent.tab_id.0 != pane.tab_id.0
             || agents_by_id.insert(agent.pane.clone(), agent).is_some()
         {
-            return herdr_nexus_core::ExternalResult::Uncertain;
+            return capsule_nexus_core::ExternalResult::Uncertain;
         }
     }
-    herdr_nexus_core::ExternalResult::Succeeded(
+    capsule_nexus_core::ExternalResult::Succeeded(
         panes
             .into_iter()
-            .map(|pane| emission_herdr_nexus::PaneObservation {
+            .map(|pane| emission_capsule_nexus::PaneObservation {
                 state: agents_by_id
                     .remove(&pane.pane)
-                    .map_or(signal_herdr_nexus::State::Open, |agent| agent.state),
+                    .map_or(signal_capsule_nexus::State::Open, |agent| agent.state),
                 pane: pane.pane,
             })
             .collect(),
@@ -1501,18 +1501,18 @@ impl ConfigurationStore {
 
     pub fn configure(
         &self,
-        setting: core_meta_herdr_nexus::CoreSet,
-        bind_public: impl FnOnce() -> Result<(), meta_signal_herdr_nexus::BootstrapRefusal>,
-    ) -> core_meta_herdr_nexus::Response {
-        use core_meta_herdr_nexus::Response;
-        use meta_signal_herdr_nexus::{
+        setting: core_meta_capsule_nexus::CoreSet,
+        bind_public: impl FnOnce() -> Result<(), meta_signal_capsule_nexus::BootstrapRefusal>,
+    ) -> core_meta_capsule_nexus::Response {
+        use core_meta_capsule_nexus::Response;
+        use meta_signal_capsule_nexus::{
             ConfigurationRefusal, Invalid_Data, Message, Owner, SettingName,
         };
         let _transaction = self
             .configuration_transaction
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if matches!(setting, core_meta_herdr_nexus::CoreSet::Peer(_) | core_meta_herdr_nexus::CoreSet::RemovePeer(_)) {
+        if matches!(setting, core_meta_capsule_nexus::CoreSet::Peer(_) | core_meta_capsule_nexus::CoreSet::RemovePeer(_)) {
             return self.configure_peer(setting);
         }
         let mut candidate = self
@@ -1522,36 +1522,36 @@ impl ConfigurationStore {
             .clone();
         let applied = setting.clone();
         let (name, valid) = match setting {
-            core_meta_herdr_nexus::CoreSet::StartTimeout(value) => (
+            core_meta_capsule_nexus::CoreSet::StartTimeout(value) => (
                 SettingName::StartTimeout,
                 checked_duration(value.0)
                     .map(|value| candidate.start_timeout = Some(value))
                     .is_some(),
             ),
-            core_meta_herdr_nexus::CoreSet::Polling(value) => (
+            core_meta_capsule_nexus::CoreSet::Polling(value) => (
                 SettingName::Polling,
                 checked_duration(value.0)
                     .map(|value| candidate.polling = Some(value))
                     .is_some(),
             ),
-            core_meta_herdr_nexus::CoreSet::FrameCapacity(value) => (
+            core_meta_capsule_nexus::CoreSet::FrameCapacity(value) => (
                 SettingName::FrameCapacity,
                 usize::try_from(value.0)
                     .ok()
                     .filter(|value| {
-                        (herdr_nexus_wire::frame::HEADER_BYTES..=signal::MAXIMUM_SIGNAL_BYTES)
+                        (capsule_nexus_wire::frame::HEADER_BYTES..=signal::MAXIMUM_SIGNAL_BYTES)
                             .contains(value)
                     })
                     .map(|value| candidate.frame_capacity_bytes = Some(value))
                     .is_some(),
             ),
-            core_meta_herdr_nexus::CoreSet::TransportTimeout(value) => (
+            core_meta_capsule_nexus::CoreSet::TransportTimeout(value) => (
                 SettingName::TransportTimeout,
                 checked_duration(value.0)
                     .map(|value| candidate.transport_timeout = Some(value))
                     .is_some(),
             ),
-            core_meta_herdr_nexus::CoreSet::SubscriberCapacity(value) => (
+            core_meta_capsule_nexus::CoreSet::SubscriberCapacity(value) => (
                 SettingName::SubscriberCapacity,
                 usize::try_from(value)
                     .ok()
@@ -1559,8 +1559,8 @@ impl ConfigurationStore {
                     .map(|value| candidate.subscriber_capacity = Some(value))
                     .is_some(),
             ),
-            core_meta_herdr_nexus::CoreSet::Peer(_)
-            | core_meta_herdr_nexus::CoreSet::RemovePeer(_) => (
+            core_meta_capsule_nexus::CoreSet::Peer(_)
+            | core_meta_capsule_nexus::CoreSet::RemovePeer(_) => (
                 SettingName::Peer,
                 false,
             ),
@@ -1613,7 +1613,7 @@ impl ConfigurationStore {
             self.apply_subscriber_capacity(validated.subscriber_capacity);
             *self.current.write().unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(validated));
         }
-        Response::Configured(core_meta_herdr_nexus::Configured_Data {
+        Response::Configured(core_meta_capsule_nexus::Configured_Data {
             core_set: applied,
             readiness,
         })
@@ -1621,13 +1621,13 @@ impl ConfigurationStore {
 
     fn configure_peer(
         &self,
-        setting: core_meta_herdr_nexus::CoreSet,
-    ) -> core_meta_herdr_nexus::Response {
-        use core_meta_herdr_nexus::Response;
-        use meta_signal_herdr_nexus::{ConfigurationRefusal, Readiness};
+        setting: core_meta_capsule_nexus::CoreSet,
+    ) -> core_meta_capsule_nexus::Response {
+        use core_meta_capsule_nexus::Response;
+        use meta_signal_capsule_nexus::{ConfigurationRefusal, Readiness};
         let applied = setting.clone();
         match setting {
-            core_meta_herdr_nexus::CoreSet::Peer(binding) => {
+            core_meta_capsule_nexus::CoreSet::Peer(binding) => {
                 let caller = shared_translator::Caller {
                     user_id: binding.peer_identity.user_id,
                     process_id: binding.peer_identity.process_id,
@@ -1661,7 +1661,7 @@ impl ConfigurationStore {
                     self.close_peer_subscriptions(&applied);
                 }
             }
-            core_meta_herdr_nexus::CoreSet::RemovePeer(peer_id) => {
+            core_meta_capsule_nexus::CoreSet::RemovePeer(peer_id) => {
                 let mut peers = self.peers.lock().unwrap_or_else(|p| p.into_inner());
                 if peers.remove(&peer_id).is_none()
                 {
@@ -1671,10 +1671,10 @@ impl ConfigurationStore {
             }
             _ => {
                 return Response::ConfigureRefused(ConfigurationRefusal::Invalid(
-                    meta_signal_herdr_nexus::Invalid_Data {
-                        owner: meta_signal_herdr_nexus::Owner::Nexus,
-                        setting_name: meta_signal_herdr_nexus::SettingName::Peer,
-                        message: meta_signal_herdr_nexus::Message(
+                    meta_signal_capsule_nexus::Invalid_Data {
+                        owner: meta_signal_capsule_nexus::Owner::Nexus,
+                        setting_name: meta_signal_capsule_nexus::SettingName::Peer,
+                        message: meta_signal_capsule_nexus::Message(
                             "a non-peer setting reached peer configuration".into(),
                         ),
                     },
@@ -1682,16 +1682,16 @@ impl ConfigurationStore {
             }
         }
         let ready = self.current.read().unwrap_or_else(|p| p.into_inner());
-        Response::Configured(core_meta_herdr_nexus::Configured_Data {
+        Response::Configured(core_meta_capsule_nexus::Configured_Data {
             core_set: applied,
             readiness: if ready.is_some() { Readiness::Ready } else { readiness(&self.partial.read().unwrap_or_else(|p| p.into_inner())) },
         })
     }
 
-    fn close_peer_subscriptions(&self, setting: &core_meta_herdr_nexus::CoreSet) {
+    fn close_peer_subscriptions(&self, setting: &core_meta_capsule_nexus::CoreSet) {
         let peer_id = match setting {
-            core_meta_herdr_nexus::CoreSet::Peer(binding) => &binding.peer_id,
-            core_meta_herdr_nexus::CoreSet::RemovePeer(peer_id) => peer_id,
+            core_meta_capsule_nexus::CoreSet::Peer(binding) => &binding.peer_id,
+            core_meta_capsule_nexus::CoreSet::RemovePeer(peer_id) => peer_id,
             _ => return,
         };
         if let Some(queues) = self.peer_subscriber_queues
@@ -1764,8 +1764,8 @@ impl ConfigurationStore {
     }
 }
 
-fn readiness(candidate: &PartialConfiguration) -> meta_signal_herdr_nexus::Readiness {
-    use meta_signal_herdr_nexus::{Readiness, SettingName};
+fn readiness(candidate: &PartialConfiguration) -> meta_signal_capsule_nexus::Readiness {
+    use meta_signal_capsule_nexus::{Readiness, SettingName};
     let mut awaiting = Vec::new();
     if candidate.start_timeout.is_none() {
         awaiting.push(SettingName::StartTimeout);
@@ -1798,12 +1798,12 @@ fn checked_duration(milliseconds: i64) -> Option<Duration> {
     }
 }
 
-fn invalid_peer(message: &str) -> meta_signal_herdr_nexus::ConfigurationRefusal {
-    meta_signal_herdr_nexus::ConfigurationRefusal::Invalid(
-        meta_signal_herdr_nexus::Invalid_Data {
-            owner: meta_signal_herdr_nexus::Owner::Nexus,
-            setting_name: meta_signal_herdr_nexus::SettingName::Peer,
-            message: meta_signal_herdr_nexus::Message(message.into()),
+fn invalid_peer(message: &str) -> meta_signal_capsule_nexus::ConfigurationRefusal {
+    meta_signal_capsule_nexus::ConfigurationRefusal::Invalid(
+        meta_signal_capsule_nexus::Invalid_Data {
+            owner: meta_signal_capsule_nexus::Owner::Nexus,
+            setting_name: meta_signal_capsule_nexus::SettingName::Peer,
+            message: meta_signal_capsule_nexus::Message(message.into()),
         },
     )
 }
@@ -1813,11 +1813,11 @@ mod tests {
     use super::*;
 
     trait AnsweredForTest {
-        fn answered(self) -> Option<signal_herdr_nexus::Response>;
+        fn answered(self) -> Option<signal_capsule_nexus::Response>;
     }
 
     impl AnsweredForTest for PublicDispatch {
-        fn answered(self) -> Option<signal_herdr_nexus::Response> {
+        fn answered(self) -> Option<signal_capsule_nexus::Response> {
             match self {
                 Self::Answered(response) => Some(response),
                 Self::Subscribe(_) => None,
@@ -1829,9 +1829,9 @@ mod tests {
         fn with_emitter(paths: &SocketPaths, emitter: Arc<dyn ExternalEmitter>) -> Dispatcher;
         fn dispatch(
             &self,
-            query: signal_herdr_nexus::Query,
+            query: signal_capsule_nexus::Query,
             configuration: Arc<ReadyCoreConfiguration>,
-        ) -> signal_herdr_nexus::Response;
+        ) -> signal_capsule_nexus::Response;
         fn subscription_source_count(&self) -> usize;
     }
 
@@ -1844,7 +1844,7 @@ mod tests {
             let mut dispatcher = Dispatcher::new(
                 paths,
                 configuration,
-                signal_herdr_nexus::InstanceId("test-instance".into()),
+                signal_capsule_nexus::InstanceId("test-instance".into()),
             );
             dispatcher.emitter = emitter;
             dispatcher
@@ -1852,9 +1852,9 @@ mod tests {
 
         fn dispatch(
             &self,
-            query: signal_herdr_nexus::Query,
+            query: signal_capsule_nexus::Query,
             configuration: Arc<ReadyCoreConfiguration>,
-        ) -> signal_herdr_nexus::Response {
+        ) -> signal_capsule_nexus::Response {
             self.dispatch_as(
                 shared_translator::Principal::Login(shared_translator::UserId(i64::from(
                     nix::unistd::getuid().as_raw(),
@@ -1881,10 +1881,10 @@ mod tests {
         fn emit(
             &self,
             _configuration: &ReadyCoreConfiguration,
-            _herdr: emission_herdr_nexus::Herdr,
+            _herdr: emission_capsule_nexus::Herdr,
         ) -> EmissionResult {
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            EmissionResult::External(emission_herdr_nexus::ExternalOutcome::Uncertain)
+            EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Uncertain)
         }
     }
 
@@ -1907,16 +1907,16 @@ mod tests {
         })
     }
 
-    fn test_pane() -> signal_herdr_nexus::Pane {
-        signal_herdr_nexus::Pane {
-            session: signal_herdr_nexus::Session("missing".into()),
-            pane_id: signal_herdr_nexus::PaneId("pane".into()),
+    fn test_pane() -> signal_capsule_nexus::Pane {
+        signal_capsule_nexus::Pane {
+            session: signal_capsule_nexus::Session("missing".into()),
+            pane_id: signal_capsule_nexus::PaneId("pane".into()),
         }
     }
 
     #[test]
     fn peer_setting_captures_process_lifetime_and_remove_is_typed() {
-        use core_meta_herdr_nexus::{CoreSet, Response};
+        use core_meta_capsule_nexus::{CoreSet, Response};
         use shared_translator::{PeerBinding, PeerId, PeerIdentity, ProcessId, UserId};
 
         let store = ConfigurationStore::default();
@@ -1946,14 +1946,14 @@ mod tests {
         assert_eq!(
             store.configure(CoreSet::RemovePeer(peer_id.clone()), || Ok(())),
             Response::ConfigureRefused(
-                meta_signal_herdr_nexus::ConfigurationRefusal::UnknownPeer(peer_id)
+                meta_signal_capsule_nexus::ConfigurationRefusal::UnknownPeer(peer_id)
             )
         );
     }
 
     #[test]
     fn exited_pidfd_binding_is_not_admitted() {
-        use core_meta_herdr_nexus::CoreSet;
+        use core_meta_capsule_nexus::CoreSet;
         use shared_translator::{PeerBinding, PeerId, PeerIdentity, ProcessId, UserId};
         let mut child = std::process::Command::new("/bin/sh")
             .args(["-c", "sleep 30"])
@@ -1970,7 +1970,7 @@ mod tests {
                 peer_id,
                 peer_identity: identity.clone(),
             }), || Ok(())),
-            core_meta_herdr_nexus::Response::Configured(_)
+            core_meta_capsule_nexus::Response::Configured(_)
         ));
         child.kill().expect("terminate fixture child");
         child.wait().expect("reap fixture child");
@@ -2012,7 +2012,7 @@ mod tests {
 
     #[test]
     fn peer_rebind_closes_old_binding_subscriptions() {
-        use core_meta_herdr_nexus::CoreSet;
+        use core_meta_capsule_nexus::CoreSet;
         use shared_translator::{PeerBinding, PeerId, PeerIdentity, ProcessId, UserId};
         let store = ConfigurationStore::default();
         let peer_id = PeerId("stable".into());
@@ -2023,17 +2023,17 @@ mod tests {
                 process_id: ProcessId(i64::from(std::process::id())),
             },
         };
-        assert!(matches!(store.configure(CoreSet::Peer(binding.clone()), || Ok(())), core_meta_herdr_nexus::Response::Configured(_)));
+        assert!(matches!(store.configure(CoreSet::Peer(binding.clone()), || Ok(())), core_meta_capsule_nexus::Response::Configured(_)));
         let queue = Arc::new(SubscriberQueue::new(1));
         assert!(store.register_peer_subscriber(&peer_id, 1, &queue));
         assert!(queue.is_open());
-        assert!(matches!(store.configure(CoreSet::Peer(binding), || Ok(())), core_meta_herdr_nexus::Response::Configured(_)));
+        assert!(matches!(store.configure(CoreSet::Peer(binding), || Ok(())), core_meta_capsule_nexus::Response::Configured(_)));
         assert!(!queue.is_open());
     }
 
     #[test]
     fn subscription_registration_rejects_a_rebound_generation() {
-        use core_meta_herdr_nexus::CoreSet;
+        use core_meta_capsule_nexus::CoreSet;
         use shared_translator::{PeerBinding, PeerId, PeerIdentity, ProcessId, UserId};
         let store = ConfigurationStore::default();
         let peer_id = PeerId("stable".into());
@@ -2042,13 +2042,13 @@ mod tests {
             process_id: ProcessId(i64::from(std::process::id())),
         };
         let binding = PeerBinding { peer_id: peer_id.clone(), peer_identity: identity.clone() };
-        assert!(matches!(store.configure(CoreSet::Peer(binding.clone()), || Ok(())), core_meta_herdr_nexus::Response::Configured(_)));
+        assert!(matches!(store.configure(CoreSet::Peer(binding.clone()), || Ok(())), core_meta_capsule_nexus::Response::Configured(_)));
         let caller = shared_translator::Caller {
             user_id: identity.user_id,
             process_id: identity.process_id,
         };
         let (_, old_generation) = store.peer_for(&caller).expect("first binding admitted");
-        assert!(matches!(store.configure(CoreSet::Peer(binding), || Ok(())), core_meta_herdr_nexus::Response::Configured(_)));
+        assert!(matches!(store.configure(CoreSet::Peer(binding), || Ok(())), core_meta_capsule_nexus::Response::Configured(_)));
         let stale = Arc::new(SubscriberQueue::new(1));
         assert!(!store.register_peer_subscriber(&peer_id, old_generation, &stale));
         assert!(!stale.is_open());
@@ -2060,7 +2060,7 @@ mod tests {
 
     #[test]
     fn rebind_cannot_cross_validated_subscription_registration() {
-        use core_meta_herdr_nexus::CoreSet;
+        use core_meta_capsule_nexus::CoreSet;
         use shared_translator::{PeerBinding, PeerId, PeerIdentity, ProcessId, UserId};
         use std::sync::{Arc, Barrier, mpsc};
         use std::time::Duration;
@@ -2077,7 +2077,7 @@ mod tests {
         };
         assert!(matches!(
             store.configure(CoreSet::Peer(binding.clone()), || Ok(())),
-            core_meta_herdr_nexus::Response::Configured(_)
+            core_meta_capsule_nexus::Response::Configured(_)
         ));
         let caller = shared_translator::Caller {
             user_id: identity.user_id,
@@ -2124,7 +2124,7 @@ mod tests {
         assert!(registration.join().expect("registration thread"));
         assert!(matches!(
             observed.recv_timeout(Duration::from_secs(1)).expect("rebind completed"),
-            core_meta_herdr_nexus::Response::Configured(_)
+            core_meta_capsule_nexus::Response::Configured(_)
         ));
         rebinding.join().expect("rebind thread");
         assert!(!stale.is_open(), "rebind closes the just-registered old generation");
@@ -2137,8 +2137,8 @@ mod tests {
 
     #[test]
     fn socket_emitter_waits_idle_then_bounds_progress_and_capacity() {
-        use emission_herdr_nexus::{ExternalOutcome, Herdr, Verb};
-        use herdr_nexus_wire::transport_types::{Kind, Lane};
+        use emission_capsule_nexus::{ExternalOutcome, Herdr, Verb};
+        use capsule_nexus_wire::transport_types::{Kind, Lane};
         use signal::{ByteViewable, Signalizable};
         use std::os::unix::net::UnixListener;
 
@@ -2149,7 +2149,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir(&directory).expect("fixture directory");
         let herdr = Herdr {
-            session: signal_herdr_nexus::Session("bounds".into()),
+            session: signal_capsule_nexus::Session("bounds".into()),
             verb: Verb::PaneList,
         };
 
@@ -2157,7 +2157,7 @@ mod tests {
         let timeout_listener = UnixListener::bind(&timeout_socket).expect("timeout listener");
         let timeout_peer = std::thread::spawn(move || {
             let (mut stream, _) = timeout_listener.accept().expect("timeout connection");
-            let request = herdr_nexus_wire::frame::read_frame(
+            let request = capsule_nexus_wire::frame::read_frame(
                 &mut stream,
                 signal::MAXIMUM_SIGNAL_BYTES,
             )
@@ -2165,14 +2165,14 @@ mod tests {
             assert_eq!(request.lane, Lane::EmissionSignal);
             assert_eq!(request.kind, Kind::Request);
             std::thread::sleep(Duration::from_millis(100));
-            let answer = emission_herdr_nexus::Response::Emitted(ExternalOutcome::Started(
-                signal_herdr_nexus::State::Idle,
+            let answer = emission_capsule_nexus::Response::Emitted(ExternalOutcome::Started(
+                signal_capsule_nexus::State::Idle,
             ))
             .signalize()
             .expect("signalize answer");
-            herdr_nexus_wire::frame::write_frame(
+            capsule_nexus_wire::frame::write_frame(
                 &mut stream,
-                &herdr_nexus_wire::frame::Frame {
+                &capsule_nexus_wire::frame::Frame {
                     lane: Lane::EmissionSignal,
                     kind: Kind::Answered,
                     payload: answer.bytes().to_vec(),
@@ -2190,7 +2190,7 @@ mod tests {
         assert!(matches!(
             emitter.emit(&configuration, herdr.clone()),
             EmissionResult::External(ExternalOutcome::Started(
-                signal_herdr_nexus::State::Idle
+                signal_capsule_nexus::State::Idle
             ))
         ));
         assert!(began.elapsed() >= Duration::from_millis(90));
@@ -2215,7 +2215,7 @@ mod tests {
 
     #[test]
     fn four_unowned_mutations_stop_before_the_emitter() {
-        use signal_herdr_nexus::{
+        use signal_capsule_nexus::{
             AgentKind, AgentName, Command, Executable, Keys, Label, Press_Data, Program,
             Prompt_Data, Query, Start_Data, Text,
         };
@@ -2248,13 +2248,13 @@ mod tests {
         for query in queries {
             let response = dispatcher.dispatch(query, Arc::clone(&configuration));
             let outcome = match response {
-                signal_herdr_nexus::Response::Started(outcome)
-                | signal_herdr_nexus::Response::Prompted(outcome)
-                | signal_herdr_nexus::Response::Pressed(outcome)
-                | signal_herdr_nexus::Response::Closed(outcome) => outcome,
+                signal_capsule_nexus::Response::Started(outcome)
+                | signal_capsule_nexus::Response::Prompted(outcome)
+                | signal_capsule_nexus::Response::Pressed(outcome)
+                | signal_capsule_nexus::Response::Closed(outcome) => outcome,
                 _ => panic!("mutation response"),
             };
-            assert!(matches!(outcome, signal_herdr_nexus::Outcome::Unknown(_)));
+            assert!(matches!(outcome, signal_capsule_nexus::Outcome::Unknown(_)));
         }
         assert_eq!(emitter.0.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
@@ -2264,40 +2264,40 @@ mod tests {
         let emitter = Arc::new(CountingEmitter(std::sync::atomic::AtomicUsize::new(0)));
         let dispatcher = Dispatcher::with_emitter(&test_paths(), emitter.clone());
         let response = dispatcher.dispatch(
-            signal_herdr_nexus::Query::List(signal_herdr_nexus::Session("empty".into())),
+            signal_capsule_nexus::Query::List(signal_capsule_nexus::Session("empty".into())),
             test_configuration(),
         );
         assert!(matches!(
             response,
-            signal_herdr_nexus::Response::Listed(signal_herdr_nexus::Outcome::Listed(ref panes)) if panes.is_empty()
+            signal_capsule_nexus::Response::Listed(signal_capsule_nexus::Outcome::Listed(ref panes)) if panes.is_empty()
         ));
         assert_eq!(emitter.0.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     struct StaleListEmitter {
-        pane: signal_herdr_nexus::Pane,
+        pane: signal_capsule_nexus::Pane,
         list_started: std::sync::mpsc::Sender<()>,
         release_list: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
     }
 
-    fn pane_listing(pane: &signal_herdr_nexus::Pane) -> emission_herdr_nexus::PaneListing {
-        emission_herdr_nexus::PaneListing {
+    fn pane_listing(pane: &signal_capsule_nexus::Pane) -> emission_capsule_nexus::PaneListing {
+        emission_capsule_nexus::PaneListing {
             pane: pane.clone(),
-            terminal_id: emission_herdr_nexus::TerminalId("terminal".into()),
-            workspace_id: emission_herdr_nexus::WorkspaceId("workspace".into()),
-            tab_id: emission_herdr_nexus::TabId("tab".into()),
+            terminal_id: emission_capsule_nexus::TerminalId("terminal".into()),
+            workspace_id: emission_capsule_nexus::WorkspaceId("workspace".into()),
+            tab_id: emission_capsule_nexus::TabId("tab".into()),
         }
     }
 
     fn agent_listing(
-        pane: &signal_herdr_nexus::Pane,
-        state: signal_herdr_nexus::State,
-    ) -> emission_herdr_nexus::AgentListing {
-        emission_herdr_nexus::AgentListing {
+        pane: &signal_capsule_nexus::Pane,
+        state: signal_capsule_nexus::State,
+    ) -> emission_capsule_nexus::AgentListing {
+        emission_capsule_nexus::AgentListing {
             pane: pane.clone(),
-            terminal_id: emission_herdr_nexus::TerminalId("terminal".into()),
-            workspace_id: emission_herdr_nexus::WorkspaceId("workspace".into()),
-            tab_id: emission_herdr_nexus::TabId("tab".into()),
+            terminal_id: emission_capsule_nexus::TerminalId("terminal".into()),
+            workspace_id: emission_capsule_nexus::WorkspaceId("workspace".into()),
+            tab_id: emission_capsule_nexus::TabId("tab".into()),
             state,
         }
     }
@@ -2306,12 +2306,12 @@ mod tests {
         fn emit(
             &self,
             _configuration: &ReadyCoreConfiguration,
-            herdr: emission_herdr_nexus::Herdr,
+            herdr: emission_capsule_nexus::Herdr,
         ) -> EmissionResult {
-            use emission_herdr_nexus::{ExternalOutcome, Verb};
+            use emission_capsule_nexus::{ExternalOutcome, Verb};
             EmissionResult::External(match herdr.verb {
                 Verb::WorkspaceCreate(_) => ExternalOutcome::Created(self.pane.clone()),
-                Verb::AgentStart(_) => ExternalOutcome::Started(signal_herdr_nexus::State::Busy),
+                Verb::AgentStart(_) => ExternalOutcome::Started(signal_capsule_nexus::State::Busy),
                 Verb::PaneList => {
                     self.list_started.send(()).expect("announce list");
                     self.release_list
@@ -2323,7 +2323,7 @@ mod tests {
                 }
                 Verb::AgentList => ExternalOutcome::Agents(vec![agent_listing(
                     &self.pane,
-                    signal_herdr_nexus::State::Open,
+                    signal_capsule_nexus::State::Open,
                 )]),
                 _ => ExternalOutcome::Done,
             })
@@ -2332,13 +2332,13 @@ mod tests {
 
     #[test]
     fn stale_list_finishing_after_start_preserves_started_state() {
-        use signal_herdr_nexus::{
+        use signal_capsule_nexus::{
             AgentKind, AgentName, Command, Executable, Label, Name, Program, Query, Root,
             Start_Data, Value, Variable, Workspace,
         };
-        let pane = signal_herdr_nexus::Pane {
-            session: signal_herdr_nexus::Session("race".into()),
-            pane_id: signal_herdr_nexus::PaneId("pane".into()),
+        let pane = signal_capsule_nexus::Pane {
+            session: signal_capsule_nexus::Session("race".into()),
+            pane_id: signal_capsule_nexus::PaneId("pane".into()),
         };
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
@@ -2362,7 +2362,7 @@ mod tests {
         );
         assert!(matches!(
             created,
-            signal_herdr_nexus::Response::Created(signal_herdr_nexus::Outcome::Created(_))
+            signal_capsule_nexus::Response::Created(signal_capsule_nexus::Outcome::Created(_))
         ));
 
         let listing_dispatcher = Arc::clone(&dispatcher);
@@ -2389,22 +2389,22 @@ mod tests {
         );
         assert!(matches!(
             started,
-            signal_herdr_nexus::Response::Started(signal_herdr_nexus::Outcome::Done)
+            signal_capsule_nexus::Response::Started(signal_capsule_nexus::Outcome::Done)
         ));
         release_tx.send(()).expect("release stale list");
         let listed = listing.join().expect("listing thread");
-        let signal_herdr_nexus::Response::Listed(signal_herdr_nexus::Outcome::Listed(known)) =
+        let signal_capsule_nexus::Response::Listed(signal_capsule_nexus::Outcome::Listed(known)) =
             listed
         else {
             panic!("complete list");
         };
         assert_eq!(known.len(), 1);
-        assert_eq!(known[0].state, signal_herdr_nexus::State::Busy);
+        assert_eq!(known[0].state, signal_capsule_nexus::State::Busy);
     }
 
     struct LostCreationEmitter {
-        pane: signal_herdr_nexus::Pane,
-        creation_id: std::sync::Mutex<Option<signal_herdr_nexus::CreationId>>,
+        pane: signal_capsule_nexus::Pane,
+        creation_id: std::sync::Mutex<Option<signal_capsule_nexus::CreationId>>,
         creates: std::sync::atomic::AtomicUsize,
         matching_marker: bool,
     }
@@ -2413,9 +2413,9 @@ mod tests {
         fn emit(
             &self,
             _configuration: &ReadyCoreConfiguration,
-            herdr: emission_herdr_nexus::Herdr,
+            herdr: emission_capsule_nexus::Herdr,
         ) -> EmissionResult {
-            use emission_herdr_nexus::{ExternalOutcome, Verb, WorkspaceId, WorkspaceListing};
+            use emission_capsule_nexus::{ExternalOutcome, Verb, WorkspaceId, WorkspaceListing};
             EmissionResult::External(match herdr.verb {
                 Verb::WorkspaceCreate(data) => {
                     self.creates.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -2428,9 +2428,9 @@ mod tests {
                         WorkspaceListing {
                             workspace_id: WorkspaceId("workspace".into()),
                             workspace_label: if self.matching_marker {
-                                emission_herdr_nexus::managed_workspace_label(&creation_id)
+                                emission_capsule_nexus::managed_workspace_label(&creation_id)
                             } else {
-                                emission_herdr_nexus::WorkspaceLabel("unrelated".into())
+                                emission_capsule_nexus::WorkspaceLabel("unrelated".into())
                             },
                         }
                     }).collect())
@@ -2444,10 +2444,10 @@ mod tests {
 
     #[test]
     fn lost_creation_result_is_adopted_once_without_a_second_create() {
-        use signal_herdr_nexus::{Name, Outcome, Query, Response, Root, Value, Variable, Workspace};
-        let pane = signal_herdr_nexus::Pane {
-            session: signal_herdr_nexus::Session("reconcile".into()),
-            pane_id: signal_herdr_nexus::PaneId("pane".into()),
+        use signal_capsule_nexus::{Name, Outcome, Query, Response, Root, Value, Variable, Workspace};
+        let pane = signal_capsule_nexus::Pane {
+            session: signal_capsule_nexus::Session("reconcile".into()),
+            pane_id: signal_capsule_nexus::PaneId("pane".into()),
         };
         let emitter = Arc::new(LostCreationEmitter {
             pane: pane.clone(),
@@ -2486,10 +2486,10 @@ mod tests {
 
     #[test]
     fn unrelated_workspace_marker_is_not_adopted() {
-        use signal_herdr_nexus::{Outcome, Query, Response, Root, Workspace};
-        let pane = signal_herdr_nexus::Pane {
-            session: signal_herdr_nexus::Session("unrelated".into()),
-            pane_id: signal_herdr_nexus::PaneId("pane".into()),
+        use signal_capsule_nexus::{Outcome, Query, Response, Root, Workspace};
+        let pane = signal_capsule_nexus::Pane {
+            session: signal_capsule_nexus::Session("unrelated".into()),
+            pane_id: signal_capsule_nexus::PaneId("pane".into()),
         };
         let emitter = Arc::new(LostCreationEmitter {
             pane: pane.clone(),
@@ -2518,24 +2518,24 @@ mod tests {
     }
 
     struct SubscriptionEmitter {
-        pane: signal_herdr_nexus::Pane,
+        pane: signal_capsule_nexus::Pane,
         listings:
-            std::sync::Mutex<std::collections::VecDeque<emission_herdr_nexus::ExternalOutcome>>,
+            std::sync::Mutex<std::collections::VecDeque<emission_capsule_nexus::ExternalOutcome>>,
         list_count: std::sync::atomic::AtomicUsize,
         list_start_timeouts: std::sync::Mutex<Vec<Duration>>,
-        close_outcome: std::sync::Mutex<Option<emission_herdr_nexus::ExternalOutcome>>,
+        close_outcome: std::sync::Mutex<Option<emission_capsule_nexus::ExternalOutcome>>,
     }
 
     impl ExternalEmitter for SubscriptionEmitter {
         fn emit(
             &self,
             configuration: &ReadyCoreConfiguration,
-            herdr: emission_herdr_nexus::Herdr,
+            herdr: emission_capsule_nexus::Herdr,
         ) -> EmissionResult {
-            use emission_herdr_nexus::{ExternalOutcome, Verb};
+            use emission_capsule_nexus::{ExternalOutcome, Verb};
             EmissionResult::External(match herdr.verb {
                 Verb::WorkspaceCreate(_) => ExternalOutcome::Created(self.pane.clone()),
-                Verb::AgentStart(_) => ExternalOutcome::Started(signal_herdr_nexus::State::Busy),
+                Verb::AgentStart(_) => ExternalOutcome::Started(signal_capsule_nexus::State::Busy),
                 Verb::PaneList => {
                     self.list_start_timeouts
                         .lock()
@@ -2553,7 +2553,7 @@ mod tests {
                     .unwrap_or_else(|| {
                         ExternalOutcome::Agents(vec![agent_listing(
                             &self.pane,
-                            signal_herdr_nexus::State::Open,
+                            signal_capsule_nexus::State::Open,
                         )])
                     }),
                 Verb::PaneClose(_) => self
@@ -2568,19 +2568,19 @@ mod tests {
     }
 
     fn started_dispatcher(
-        listings: Vec<emission_herdr_nexus::ExternalOutcome>,
+        listings: Vec<emission_capsule_nexus::ExternalOutcome>,
     ) -> (
         Arc<Dispatcher>,
         Arc<SubscriptionEmitter>,
-        signal_herdr_nexus::Pane,
+        signal_capsule_nexus::Pane,
     ) {
-        use signal_herdr_nexus::{
+        use signal_capsule_nexus::{
             AgentKind, AgentName, Command, Executable, Label, Program, Query, Root, Start_Data,
             Workspace,
         };
-        let pane = signal_herdr_nexus::Pane {
-            session: signal_herdr_nexus::Session("subscription".into()),
-            pane_id: signal_herdr_nexus::PaneId("pane".into()),
+        let pane = signal_capsule_nexus::Pane {
+            session: signal_capsule_nexus::Session("subscription".into()),
+            pane_id: signal_capsule_nexus::PaneId("pane".into()),
         };
         let emitter = Arc::new(SubscriptionEmitter {
             pane: pane.clone(),
@@ -2601,7 +2601,7 @@ mod tests {
         );
         assert!(matches!(
             created,
-            signal_herdr_nexus::Response::Created(signal_herdr_nexus::Outcome::Created(_))
+            signal_capsule_nexus::Response::Created(signal_capsule_nexus::Outcome::Created(_))
         ));
         let started = dispatcher.dispatch(
             Query::Start(Start_Data {
@@ -2618,26 +2618,26 @@ mod tests {
         );
         assert!(matches!(
             started,
-            signal_herdr_nexus::Response::Started(signal_herdr_nexus::Outcome::Done)
+            signal_capsule_nexus::Response::Started(signal_capsule_nexus::Outcome::Done)
         ));
         (dispatcher, emitter, pane)
     }
 
     fn read_subscription(
         stream: &mut std::os::unix::net::UnixStream,
-    ) -> herdr_nexus_wire::public_call::Response {
+    ) -> capsule_nexus_wire::public_call::Response {
         use signal::{FrameReading, Restorable, Signal};
         let body = stream
             .read_frame(signal::FrameCapacity::from(4096))
             .expect("subscription frame");
-        Signal::<herdr_nexus_wire::public_call::Response>::from(Vec::from(body))
+        Signal::<capsule_nexus_wire::public_call::Response>::from(Vec::from(body))
             .restore()
             .expect("typed response")
     }
 
     #[test]
     fn ownership_is_partitioned_by_principal() {
-        use signal_herdr_nexus::{Outcome, Query, Response};
+        use signal_capsule_nexus::{Outcome, Query, Response};
         let (dispatcher, emitter, pane) = started_dispatcher(Vec::new());
         let other = shared_translator::Principal::Peer(shared_translator::PeerId("other".into()));
         assert_eq!(
@@ -2663,12 +2663,12 @@ mod tests {
 
     #[test]
     fn subscription_acks_then_reports_current_and_one_harness_loss() {
-        use emission_herdr_nexus::ExternalOutcome;
+        use emission_capsule_nexus::ExternalOutcome;
         let (dispatcher, _emitter, pane) = started_dispatcher(vec![
             ExternalOutcome::Uncertain,
             ExternalOutcome::Agents(vec![agent_listing(
                 &pane_for("subscription", "pane"),
-                signal_herdr_nexus::State::Open,
+                signal_capsule_nexus::State::Open,
             )]),
         ]);
         let (server, mut client) = std::os::unix::net::UnixStream::pair().expect("pair");
@@ -2679,13 +2679,13 @@ mod tests {
             .subscribe(server, pane.session.clone(), test_configuration())
             .expect("subscribe");
         assert!(
-            matches!(read_subscription(&mut client), herdr_nexus_wire::public_call::Response::Answered(ref output) if matches!(output.0, signal_herdr_nexus::Response::Subscribed(signal_herdr_nexus::Outcome::Done)))
+            matches!(read_subscription(&mut client), capsule_nexus_wire::public_call::Response::Answered(ref output) if matches!(output.0, signal_capsule_nexus::Response::Subscribed(signal_capsule_nexus::Outcome::Done)))
         );
         assert!(
-            matches!(read_subscription(&mut client), herdr_nexus_wire::public_call::Response::Answered(ref output) if matches!(&output.0, signal_herdr_nexus::Response::Changed(change) if change.pane == pane && change.state == signal_herdr_nexus::State::Busy))
+            matches!(read_subscription(&mut client), capsule_nexus_wire::public_call::Response::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Response::Changed(change) if change.pane == pane && change.state == signal_capsule_nexus::State::Busy))
         );
         assert!(
-            matches!(read_subscription(&mut client), herdr_nexus_wire::public_call::Response::Answered(ref output) if matches!(&output.0, signal_herdr_nexus::Response::Changed(change) if change.pane == pane && change.state == signal_herdr_nexus::State::Dead))
+            matches!(read_subscription(&mut client), capsule_nexus_wire::public_call::Response::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Response::Changed(change) if change.pane == pane && change.state == signal_capsule_nexus::State::Dead))
         );
         client
             .set_read_timeout(Some(Duration::from_millis(35)))
@@ -2699,10 +2699,10 @@ mod tests {
         );
     }
 
-    fn pane_for(session: &str, pane: &str) -> signal_herdr_nexus::Pane {
-        signal_herdr_nexus::Pane {
-            session: signal_herdr_nexus::Session(session.into()),
-            pane_id: signal_herdr_nexus::PaneId(pane.into()),
+    fn pane_for(session: &str, pane: &str) -> signal_capsule_nexus::Pane {
+        signal_capsule_nexus::Pane {
+            session: signal_capsule_nexus::Session(session.into()),
+            pane_id: signal_capsule_nexus::PaneId(pane.into()),
         }
     }
 
@@ -2760,12 +2760,12 @@ mod tests {
 
     #[test]
     fn late_subscriber_cursor_does_not_repeat_its_current_state() {
-        use emission_herdr_nexus::ExternalOutcome;
-        use signal_herdr_nexus::{AgentKind, AgentName, Command, Executable, Label, Program, Query, Start_Data};
+        use emission_capsule_nexus::ExternalOutcome;
+        use signal_capsule_nexus::{AgentKind, AgentName, Command, Executable, Label, Program, Query, Start_Data};
         let pane = pane_for("subscription", "pane");
         let (dispatcher, _emitter, _) = started_dispatcher(vec![
-            ExternalOutcome::Agents(vec![agent_listing(&pane, signal_herdr_nexus::State::Idle)]),
-            ExternalOutcome::Agents(vec![agent_listing(&pane, signal_herdr_nexus::State::Busy)]),
+            ExternalOutcome::Agents(vec![agent_listing(&pane, signal_capsule_nexus::State::Idle)]),
+            ExternalOutcome::Agents(vec![agent_listing(&pane, signal_capsule_nexus::State::Busy)]),
         ]);
         let slow = Arc::new(ReadyCoreConfiguration {
             polling: Duration::from_millis(100),
@@ -2780,7 +2780,7 @@ mod tests {
         dispatcher.subscribe(server_a, pane.session.clone(), Arc::clone(&slow)).expect("subscribe a");
         let _ = read_subscription(&mut client_a); // acknowledgement
         let _ = read_subscription(&mut client_a); // current Busy
-        assert!(matches!(read_subscription(&mut client_a), herdr_nexus_wire::public_call::Response::Answered(ref output) if matches!(&output.0, signal_herdr_nexus::Response::Changed(change) if change.state == signal_herdr_nexus::State::Idle)));
+        assert!(matches!(read_subscription(&mut client_a), capsule_nexus_wire::public_call::Response::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Response::Changed(change) if change.state == signal_capsule_nexus::State::Idle)));
 
         let started = dispatcher.dispatch(Query::Start(Start_Data {
             pane: pane.clone(),
@@ -2792,13 +2792,13 @@ mod tests {
             },
             label: Label("flow".into()),
         }), Arc::clone(&slow));
-        assert!(matches!(started, signal_herdr_nexus::Response::Started(signal_herdr_nexus::Outcome::Done)));
+        assert!(matches!(started, signal_capsule_nexus::Response::Started(signal_capsule_nexus::Outcome::Done)));
         let (server_b, mut client_b) = std::os::unix::net::UnixStream::pair().expect("pair b");
         client_b.set_read_timeout(Some(Duration::from_millis(300))).expect("timeout b");
         dispatcher.subscribe(server_b, pane.session.clone(), Arc::clone(&slow)).expect("subscribe b");
         let _ = read_subscription(&mut client_b); // acknowledgement
-        assert!(matches!(read_subscription(&mut client_b), herdr_nexus_wire::public_call::Response::Answered(ref output) if matches!(&output.0, signal_herdr_nexus::Response::Changed(change) if change.state == signal_herdr_nexus::State::Busy)));
-        assert!(matches!(read_subscription(&mut client_a), herdr_nexus_wire::public_call::Response::Answered(ref output) if matches!(&output.0, signal_herdr_nexus::Response::Changed(change) if change.state == signal_herdr_nexus::State::Busy)));
+        assert!(matches!(read_subscription(&mut client_b), capsule_nexus_wire::public_call::Response::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Response::Changed(change) if change.state == signal_capsule_nexus::State::Busy)));
+        assert!(matches!(read_subscription(&mut client_a), capsule_nexus_wire::public_call::Response::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Response::Changed(change) if change.state == signal_capsule_nexus::State::Busy)));
         client_b.set_read_timeout(Some(Duration::from_millis(35))).expect("short timeout b");
         use signal::FrameReading;
         assert!(client_b.read_frame(signal::FrameCapacity::from(4096)).is_err(), "late subscriber must not receive its current Busy twice");
@@ -2832,7 +2832,7 @@ mod tests {
     #[test]
     fn successful_close_delivers_one_dead_only_to_current_subscribers() {
         use signal::FrameReading;
-        use signal_herdr_nexus::{Outcome, Query, Response, State};
+        use signal_capsule_nexus::{Outcome, Query, Response, State};
         let (dispatcher, _emitter, pane) = started_dispatcher(Vec::new());
         let configuration = test_configuration();
         let (server, mut client) = std::os::unix::net::UnixStream::pair().expect("pair");
@@ -2846,7 +2846,7 @@ mod tests {
         ));
         assert!(matches!(
             read_subscription(&mut client),
-            herdr_nexus_wire::public_call::Response::Answered(ref output)
+            capsule_nexus_wire::public_call::Response::Answered(ref output)
                 if matches!(&output.0, Response::Changed(change) if change.pane == pane && change.state == State::Dead)
         ));
         client.set_read_timeout(Some(Duration::from_millis(40))).expect("short timeout");
@@ -2861,8 +2861,8 @@ mod tests {
 
     #[test]
     fn externally_absent_owned_pane_is_released_and_publishes_one_dead() {
-        use emission_herdr_nexus::ExternalOutcome;
-        use signal_herdr_nexus::{
+        use emission_capsule_nexus::ExternalOutcome;
+        use signal_capsule_nexus::{
             ErrorCode, Message, Outcome, Query, Refusal, Response, State,
         };
         let (dispatcher, emitter, pane) = started_dispatcher(Vec::new());
@@ -2890,7 +2890,7 @@ mod tests {
         ));
         assert!(matches!(
             read_subscription(&mut client),
-            herdr_nexus_wire::public_call::Response::Answered(ref output)
+            capsule_nexus_wire::public_call::Response::Answered(ref output)
                 if matches!(&output.0, Response::Changed(change) if change.pane == pane && change.state == State::Dead)
         ));
         assert!(matches!(
@@ -2901,8 +2901,8 @@ mod tests {
 
     #[test]
     fn another_close_refusal_retains_ownership_and_publishes_no_dead() {
-        use emission_herdr_nexus::ExternalOutcome;
-        use signal_herdr_nexus::{ErrorCode, Message, Outcome, Query, Refusal, Response};
+        use emission_capsule_nexus::ExternalOutcome;
+        use signal_capsule_nexus::{ErrorCode, Message, Outcome, Query, Refusal, Response};
         let (dispatcher, emitter, pane) = started_dispatcher(Vec::new());
         *emitter.close_outcome.lock().expect("close outcome") = Some(
             ExternalOutcome::Refused(Refusal {
@@ -2935,7 +2935,7 @@ mod tests {
     #[test]
     fn stale_poll_finishing_after_close_cannot_reopen_the_pane() {
         use signal::FrameReading;
-        use signal_herdr_nexus::{
+        use signal_capsule_nexus::{
             AgentKind, AgentName, Command, Executable, Label, Outcome, Program, Query, Response,
             Root, Start_Data, State, Workspace,
         };
@@ -2992,7 +2992,7 @@ mod tests {
         ));
         assert!(matches!(
             read_subscription(&mut client),
-            herdr_nexus_wire::public_call::Response::Answered(ref output)
+            capsule_nexus_wire::public_call::Response::Answered(ref output)
                 if matches!(&output.0, Response::Changed(change) if change.pane == pane && change.state == State::Dead)
         ));
         release_poll_tx.send(()).expect("release stale poll");
@@ -3006,7 +3006,7 @@ mod tests {
 
     #[test]
     fn bounded_subscriber_queue_disconnects_only_the_overflowing_peer() {
-        use signal_herdr_nexus::{Outcome, Response};
+        use signal_capsule_nexus::{Outcome, Response};
         let slow = SubscriberQueue::new(1);
         let healthy = SubscriberQueue::new(2);
         assert!(slow.enqueue(Response::Subscribed(Outcome::Done)));
@@ -3018,7 +3018,7 @@ mod tests {
 
     #[test]
     fn lowering_subscriber_capacity_disconnects_only_queues_above_the_new_bound() {
-        use signal_herdr_nexus::{Outcome, Response};
+        use signal_capsule_nexus::{Outcome, Response};
         let store = ConfigurationStore::default();
         let over = Arc::new(SubscriberQueue::new(3));
         let within = Arc::new(SubscriberQueue::new(3));
@@ -3036,7 +3036,7 @@ mod tests {
     fn core_accepts_only_the_paired_translator_process() {
         use shared_translator::{PeerIdentity, ProcessId, UserId};
         let (client, _server) = std::os::unix::net::UnixStream::pair().expect("socket pair");
-        let actual = herdr_nexus_wire::frame::peer_caller(&client).expect("peer credentials");
+        let actual = capsule_nexus_wire::frame::peer_caller(&client).expect("peer credentials");
         let paired = BoundPeer::capture(PeerIdentity {
             user_id: actual.user_id,
             process_id: actual.process_id,

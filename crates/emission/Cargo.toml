@@ -1,5 +1,5 @@
 [package]
-name = "emission-herdr-nexus"
+name = "emission-capsule-nexus"
 version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -7,14 +7,14 @@ publish = false
 
 [features]
 default = []
-datom = ["signal-herdr-nexus/datom", "dep:datom-codec", "dep:protos"]
+datom = ["signal-capsule-nexus/datom", "dep:datom-codec", "dep:protos"]
 
 [dependencies]
 datom-codec = { git = "https://github.com/LiGoldragon/datom-codec", rev = "09a0526", optional = true }
 protos = { git = "https://github.com/LiGoldragon/protos", rev = "c93b598", optional = true }
 rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 signal.workspace = true
-signal-herdr-nexus.workspace = true
+signal-capsule-nexus.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"

@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use herdr_nexus_wire::transport_types::{
+use capsule_nexus_wire::transport_types::{
     Admission, CoreBootstrap, FrameCapacityBytes, FrameDeadlineMilliseconds, RetryDelayMilliseconds,
 };
 use shared_translator::{
@@ -54,7 +54,7 @@ fn admission(deadline: i64) -> Admission {
 
 /// Feed one bootstrap to the daemon and return whether it exited successfully.
 fn refuse(bootstrap: CoreBootstrap) -> bool {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-nexus-daemon"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_capsule-nexus-daemon"))
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -87,7 +87,7 @@ fn bootstrap(place: Place, admission: Admission) -> CoreBootstrap {
             user_id: UserId(0),
             process_id: ProcessId(1),
         },
-        instance_id: signal_herdr_nexus::InstanceId("instance".into()),
+        instance_id: signal_capsule_nexus::InstanceId("instance".into()),
     }
 }
 

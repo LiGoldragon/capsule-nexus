@@ -7,23 +7,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut input = std::io::stdin().lock();
         let body = input.read_frame(bootstrap_capacity)?;
         let bootstrap =
-            Signal::<herdr_nexus_wire::transport_types::CoreBootstrap>::from(Vec::<u8>::from(body))
+            Signal::<capsule_nexus_wire::transport_types::CoreBootstrap>::from(Vec::<u8>::from(body))
                 .restore()?;
         drop(input);
         nix::unistd::close(0)?;
         bootstrap
     };
-    let admission = herdr_nexus_wire::ValidAdmission::try_from(&place.admission)
+    let admission = capsule_nexus_wire::ValidAdmission::try_from(&place.admission)
         .map_err(|message| format!("invalid core bootstrap admission: {message}"))?;
     shared_translator::placement::validate_place_name(&place.place.place_name.0)?;
     shared_translator::placement::Preparable::prepare_for_start(&place.place)
         .map_err(|error| format!("place preparation failed: {error}"))?;
-    let bootstrap = Arc::new(herdr_nexus_daemon::Bootstrap::bind(
+    let bootstrap = Arc::new(capsule_nexus_daemon::Bootstrap::bind(
         &place.place,
         admission,
         place.peer_identity,
     )?);
-    let dispatcher = Arc::new(herdr_nexus_daemon::Dispatcher::new(
+    let dispatcher = Arc::new(capsule_nexus_daemon::Dispatcher::new(
         bootstrap.paths(),
         bootstrap.configuration_store(),
         place.instance_id,
@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let meta = Arc::clone(&bootstrap);
     std::thread::spawn(move || loop {
         if let Err(error) = meta.serve_next_meta() {
-            eprintln!("herdr Nexus meta listener failed permanently: {error}");
+            eprintln!("Capsule Nexus meta listener failed permanently: {error}");
             std::process::exit(1);
         }
     });
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let accepted = match bootstrap.accept_public() {
             Ok(accepted) => accepted,
             Err(error) => {
-                return Err(format!("herdr Nexus public listener failed permanently: {error}").into());
+                return Err(format!("Capsule Nexus public listener failed permanently: {error}").into());
             }
         };
         let stream = accepted.stream;
@@ -53,16 +53,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::thread::spawn(move || {
             let result = (|| -> Result<(), Box<dyn std::error::Error>> {
                 let capacity = FrameCapacity::from(configuration.frame_capacity_bytes);
-                let mut input = herdr_nexus_daemon::DeadlineStream::new(
+                let mut input = capsule_nexus_daemon::DeadlineStream::new(
                     stream.try_clone()?,
                     configuration.transport_timeout,
                 )?;
                 let body = input.read_frame(capacity)?;
                 let call =
-                    Signal::<herdr_nexus_wire::public_call::Query>::from(Vec::<u8>::from(body))
+                    Signal::<capsule_nexus_wire::public_call::Query>::from(Vec::<u8>::from(body))
                         .restore()?;
-                let herdr_nexus_wire::public_call::Query::Call(call) = call;
-                let actual = herdr_nexus_wire::frame::peer_caller(&stream)?;
+                let capsule_nexus_wire::public_call::Query::Call(call) = call;
+                let actual = capsule_nexus_wire::frame::peer_caller(&stream)?;
                 let peer_grant = authority.peer_grant();
                 if let Some((peer_id, generation)) = &peer_grant {
                     if !dispatcher.peer_grant_is_current(&actual, peer_id, *generation) {
@@ -73,13 +73,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .into());
                     }
                 }
-                let principal = herdr_nexus_daemon::principal_for(&authority, &actual, &call.caller)?;
+                let principal = capsule_nexus_daemon::principal_for(&authority, &actual, &call.caller)?;
                 let response = match dispatcher.dispatch_as(
                     principal.clone(),
                     call.input.0,
                     Arc::clone(&configuration),
                 ) {
-                    herdr_nexus_daemon::PublicDispatch::Subscribe(session) => {
+                    capsule_nexus_daemon::PublicDispatch::Subscribe(session) => {
                         return dispatcher.subscribe_bound(
                             stream,
                             principal,
@@ -88,12 +88,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             configuration,
                         )
                     }
-                    herdr_nexus_daemon::PublicDispatch::Answered(response) => response,
+                    capsule_nexus_daemon::PublicDispatch::Answered(response) => response,
                 };
-                let response = herdr_nexus_wire::public_call::Response::Answered(
-                    herdr_nexus_wire::public_payload::Output(response),
+                let response = capsule_nexus_wire::public_call::Response::Answered(
+                    capsule_nexus_wire::public_payload::Output(response),
                 );
-                let mut output = herdr_nexus_daemon::DeadlineStream::new(
+                let mut output = capsule_nexus_daemon::DeadlineStream::new(
                     stream,
                     configuration.transport_timeout,
                 )?;
@@ -101,7 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(())
             })();
             if let Err(error) = result {
-                eprintln!("herdr Nexus public request failed: {error}");
+                eprintln!("Capsule Nexus public request failed: {error}");
             }
         });
     }

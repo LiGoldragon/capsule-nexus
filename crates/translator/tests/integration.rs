@@ -1,6 +1,6 @@
 #![cfg(feature = "text")]
 use datom_codec::{Actualizing, Budget, Potential};
-use signal_herdr_nexus::{Outcome, Query, Response};
+use signal_capsule_nexus::{Outcome, Query, Response};
 use shared_translator::{ByteViewable, Restorable, Signal, Signalizable};
 
 #[test]

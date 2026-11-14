@@ -23,18 +23,18 @@ start_pair() {
   state=$HOME/.local/state/nexus/one
   mkdir -p "$directory" "$state"
   place="{ one $directory $state }"
-  "$package/bin/herdr-pair" "$place" >"$base/$generation.log" 2>&1 &
+  "$package/bin/capsule-pair" "$place" >"$base/$generation.log" 2>&1 &
   pair_pid=$!
   launchers+=("$pair_pid")
   child_pids=()
   for _ in $(seq 1 100); do
     read -r -a child_pids <<<"$(cat "/proc/$pair_pid/task/$pair_pid/children" 2>/dev/null || true)"
-    [[ ${#child_pids[@]} -eq 2 && -S $directory/herdr-nexus-meta-translator.sock ]] && break
+    [[ ${#child_pids[@]} -eq 2 && -S $directory/capsule-meta-translator.sock ]] && break
     sleep .05
   done
   [[ ${#child_pids[@]} -eq 2 ]]
-  [[ -S $directory/herdr-nexus-meta-translator.sock ]]
-  "$package/bin/herdr-nexus-meta" one 'Configure.Polling.100' \
+  [[ -S $directory/capsule-meta-translator.sock ]]
+  "$package/bin/capsule-meta" one 'Configure.Polling.100' \
     | grep -q Configured
 }
 

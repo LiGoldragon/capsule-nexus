@@ -43,60 +43,60 @@ rec {
   # You can override the features with
   # workspaceMembers."${crateName}".build.override { features = [ "default" "feature1" ... ]; }.
   workspaceMembers = {
-    "core-meta-herdr-nexus" = rec {
-      packageId = "core-meta-herdr-nexus";
+    "capsule-nexus-core" = rec {
+      packageId = "capsule-nexus-core";
       build = internal.buildRustCrateWithFeatures {
-        packageId = "core-meta-herdr-nexus";
+        packageId = "capsule-nexus-core";
       };
 
       # Debug support which might change between releases.
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
-    "emission-herdr-nexus" = rec {
-      packageId = "emission-herdr-nexus";
+    "capsule-nexus-daemon" = rec {
+      packageId = "capsule-nexus-daemon";
       build = internal.buildRustCrateWithFeatures {
-        packageId = "emission-herdr-nexus";
+        packageId = "capsule-nexus-daemon";
       };
 
       # Debug support which might change between releases.
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
-    "herdr-nexus-core" = rec {
-      packageId = "herdr-nexus-core";
+    "capsule-nexus-translator" = rec {
+      packageId = "capsule-nexus-translator";
       build = internal.buildRustCrateWithFeatures {
-        packageId = "herdr-nexus-core";
+        packageId = "capsule-nexus-translator";
       };
 
       # Debug support which might change between releases.
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
-    "herdr-nexus-daemon" = rec {
-      packageId = "herdr-nexus-daemon";
+    "capsule-nexus-wire" = rec {
+      packageId = "capsule-nexus-wire";
       build = internal.buildRustCrateWithFeatures {
-        packageId = "herdr-nexus-daemon";
+        packageId = "capsule-nexus-wire";
       };
 
       # Debug support which might change between releases.
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
-    "herdr-nexus-translator" = rec {
-      packageId = "herdr-nexus-translator";
+    "core-meta-capsule-nexus" = rec {
+      packageId = "core-meta-capsule-nexus";
       build = internal.buildRustCrateWithFeatures {
-        packageId = "herdr-nexus-translator";
+        packageId = "core-meta-capsule-nexus";
       };
 
       # Debug support which might change between releases.
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
-    "herdr-nexus-wire" = rec {
-      packageId = "herdr-nexus-wire";
+    "emission-capsule-nexus" = rec {
+      packageId = "emission-capsule-nexus";
       build = internal.buildRustCrateWithFeatures {
-        packageId = "herdr-nexus-wire";
+        packageId = "emission-capsule-nexus";
       };
 
       # Debug support which might change between releases.
@@ -255,6 +255,294 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "std" ];
       };
+      "capsule-nexus-core" = rec {
+        crateName = "capsule-nexus-core";
+        version = "0.2.0";
+        edition = "2021";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/core; };
+        libName = "capsule_nexus_core";
+        dependencies = [
+          {
+            name = "datom-codec";
+            packageId = "datom-codec";
+            optional = true;
+          }
+          {
+            name = "emission-capsule-nexus";
+            packageId = "emission-capsule-nexus";
+          }
+          {
+            name = "protos";
+            packageId = "protos";
+            optional = true;
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            usesDefaultFeatures = false;
+            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+          {
+            name = "signal-capsule-nexus";
+            packageId = "signal-capsule-nexus";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "translator";
+            packageId = "translator";
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "datom" = [ "dep:datom-codec" "dep:protos" "signal-capsule-nexus/datom" "translator/datom" ];
+        };
+        resolvedDefaultFeatures = [ "datom" "default" ];
+      };
+      "capsule-nexus-daemon" = rec {
+        crateName = "capsule-nexus-daemon";
+        version = "0.2.0";
+        edition = "2021";
+        crateBin = [
+          {
+            name = "capsule-nexus-daemon";
+            path = "src/main.rs";
+            requiredFeatures = [ ];
+          }
+        ];
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/daemon; };
+        libName = "capsule_nexus_daemon";
+        dependencies = [
+          {
+            name = "capsule-nexus-core";
+            packageId = "capsule-nexus-core";
+          }
+          {
+            name = "capsule-nexus-wire";
+            packageId = "capsule-nexus-wire";
+          }
+          {
+            name = "core-meta-capsule-nexus";
+            packageId = "core-meta-capsule-nexus";
+          }
+          {
+            name = "emission-capsule-nexus";
+            packageId = "emission-capsule-nexus";
+          }
+          {
+            name = "meta-signal-capsule-nexus";
+            packageId = "meta-signal-capsule-nexus";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "nix";
+            packageId = "nix";
+            features = [ "fs" "poll" "user" ];
+          }
+          {
+            name = "rustix";
+            packageId = "rustix";
+            features = [ "event" "process" ];
+          }
+          {
+            name = "signal";
+            packageId = "signal";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "signal-capsule-nexus";
+            packageId = "signal-capsule-nexus";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "translator";
+            packageId = "translator";
+            rename = "shared-translator";
+            usesDefaultFeatures = false;
+            features = [ "unix" ];
+          }
+        ];
+
+      };
+      "capsule-nexus-translator" = rec {
+        crateName = "capsule-nexus-translator";
+        version = "0.2.0";
+        edition = "2021";
+        crateBin = [
+          {
+            name = "capsule";
+            path = "src/bin/capsule.rs";
+            requiredFeatures = [ "text" ];
+          }
+          {
+            name = "capsule-meta";
+            path = "src/bin/capsule-meta.rs";
+            requiredFeatures = [ "text" ];
+          }
+          {
+            name = "capsule-pair";
+            path = "src/bin/capsule-pair.rs";
+            requiredFeatures = [ "text" ];
+          }
+          {
+            name = "capsule-place";
+            path = "src/bin/capsule-place.rs";
+            requiredFeatures = [ "text" ];
+          }
+          {
+            name = "capsule-translator";
+            path = "src/bin/capsule-translator.rs";
+            requiredFeatures = [ "text" ];
+          }
+        ];
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/translator; };
+        libName = "capsule_nexus_translator";
+        dependencies = [
+          {
+            name = "capsule-nexus-wire";
+            packageId = "capsule-nexus-wire";
+          }
+          {
+            name = "core-meta-capsule-nexus";
+            packageId = "core-meta-capsule-nexus";
+          }
+          {
+            name = "datom-codec";
+            packageId = "datom-codec";
+            optional = true;
+          }
+          {
+            name = "emission-capsule-nexus";
+            packageId = "emission-capsule-nexus";
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+          }
+          {
+            name = "meta-signal-capsule-nexus";
+            packageId = "meta-signal-capsule-nexus";
+            rename = "meta-signal-capsule-nexus";
+            features = [ "datom" ];
+          }
+          {
+            name = "nix";
+            packageId = "nix";
+            features = [ "fs" "poll" "process" "signal" "socket" "user" ];
+          }
+          {
+            name = "protos";
+            packageId = "protos";
+            optional = true;
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+          {
+            name = "rustix";
+            packageId = "rustix";
+            features = [ "process" "rand" ];
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "signal";
+            packageId = "signal";
+          }
+          {
+            name = "signal-capsule-nexus";
+            packageId = "signal-capsule-nexus";
+          }
+          {
+            name = "translator";
+            packageId = "translator";
+            rename = "shared-translator";
+            features = [ "unix" ];
+          }
+        ];
+        features = {
+          "text" = [ "datom" "dep:protos" "dep:datom-codec" "signal-capsule-nexus/datom" "shared-translator/text" ];
+        };
+        resolvedDefaultFeatures = [ "datom" "default" "text" ];
+      };
+      "capsule-nexus-wire" = rec {
+        crateName = "capsule-nexus-wire";
+        version = "0.2.0";
+        edition = "2021";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/wire; };
+        libName = "capsule_nexus_wire";
+        dependencies = [
+          {
+            name = "core-meta-capsule-nexus";
+            packageId = "core-meta-capsule-nexus";
+          }
+          {
+            name = "datom-codec";
+            packageId = "datom-codec";
+            optional = true;
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+          }
+          {
+            name = "meta-signal-capsule-nexus";
+            packageId = "meta-signal-capsule-nexus";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "nix";
+            packageId = "nix";
+            features = [ "socket" ];
+          }
+          {
+            name = "protos";
+            packageId = "protos";
+            optional = true;
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            usesDefaultFeatures = false;
+            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+          {
+            name = "signal";
+            packageId = "signal";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "signal-capsule-nexus";
+            packageId = "signal-capsule-nexus";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            usesDefaultFeatures = false;
+            features = [ "macros" "io-util" ];
+          }
+          {
+            name = "translator";
+            packageId = "translator";
+            rename = "shared-translator";
+            usesDefaultFeatures = false;
+            features = [ "unix" ];
+          }
+        ];
+        features = {
+          "datom" = [ "dep:datom-codec" "dep:protos" "signal-capsule-nexus/datom" "core-meta-capsule-nexus/datom" "meta-signal-capsule-nexus/datom" "shared-translator/datom" ];
+        };
+        resolvedDefaultFeatures = [ "datom" "default" ];
+      };
       "cfg-if" = rec {
         crateName = "cfg-if";
         version = "1.0.4";
@@ -279,12 +567,12 @@ rec {
         ];
 
       };
-      "core-meta-herdr-nexus" = rec {
-        crateName = "core-meta-herdr-nexus";
+      "core-meta-capsule-nexus" = rec {
+        crateName = "core-meta-capsule-nexus";
         version = "0.2.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/core-meta; };
-        libName = "core_meta_herdr_nexus";
+        libName = "core_meta_capsule_nexus";
         dependencies = [
           {
             name = "datom-codec";
@@ -292,8 +580,8 @@ rec {
             optional = true;
           }
           {
-            name = "meta-signal-herdr-nexus";
-            packageId = "meta-signal-herdr-nexus";
+            name = "meta-signal-capsule-nexus";
+            packageId = "meta-signal-capsule-nexus";
             usesDefaultFeatures = false;
           }
           {
@@ -319,7 +607,7 @@ rec {
           }
         ];
         features = {
-          "datom" = [ "meta-signal-herdr-nexus/datom" "translator/datom" "dep:datom-codec" "dep:protos" ];
+          "datom" = [ "meta-signal-capsule-nexus/datom" "translator/datom" "dep:datom-codec" "dep:protos" ];
         };
         resolvedDefaultFeatures = [ "datom" "default" ];
       };
@@ -386,12 +674,12 @@ rec {
         ];
 
       };
-      "emission-herdr-nexus" = rec {
-        crateName = "emission-herdr-nexus";
+      "emission-capsule-nexus" = rec {
+        crateName = "emission-capsule-nexus";
         version = "0.2.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/emission; };
-        libName = "emission_herdr_nexus";
+        libName = "emission_capsule_nexus";
         dependencies = [
           {
             name = "datom-codec";
@@ -415,13 +703,13 @@ rec {
             usesDefaultFeatures = false;
           }
           {
-            name = "signal-herdr-nexus";
-            packageId = "signal-herdr-nexus";
+            name = "signal-capsule-nexus";
+            packageId = "signal-capsule-nexus";
             usesDefaultFeatures = false;
           }
         ];
         features = {
-          "datom" = [ "signal-herdr-nexus/datom" "dep:datom-codec" "dep:protos" ];
+          "datom" = [ "signal-capsule-nexus/datom" "dep:datom-codec" "dep:protos" ];
         };
         resolvedDefaultFeatures = [ "datom" "default" ];
       };
@@ -625,294 +913,6 @@ rec {
           "serde" = [ "dep:serde_core" "dep:serde" ];
         };
       };
-      "herdr-nexus-core" = rec {
-        crateName = "herdr-nexus-core";
-        version = "0.2.0";
-        edition = "2021";
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/core; };
-        libName = "herdr_nexus_core";
-        dependencies = [
-          {
-            name = "datom-codec";
-            packageId = "datom-codec";
-            optional = true;
-          }
-          {
-            name = "emission-herdr-nexus";
-            packageId = "emission-herdr-nexus";
-          }
-          {
-            name = "protos";
-            packageId = "protos";
-            optional = true;
-          }
-          {
-            name = "rkyv";
-            packageId = "rkyv";
-            usesDefaultFeatures = false;
-            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
-          }
-          {
-            name = "signal-herdr-nexus";
-            packageId = "signal-herdr-nexus";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "translator";
-            packageId = "translator";
-            usesDefaultFeatures = false;
-          }
-        ];
-        features = {
-          "datom" = [ "dep:datom-codec" "dep:protos" "signal-herdr-nexus/datom" "translator/datom" ];
-        };
-        resolvedDefaultFeatures = [ "datom" "default" ];
-      };
-      "herdr-nexus-daemon" = rec {
-        crateName = "herdr-nexus-daemon";
-        version = "0.2.0";
-        edition = "2021";
-        crateBin = [
-          {
-            name = "herdr-nexus-daemon";
-            path = "src/main.rs";
-            requiredFeatures = [ ];
-          }
-        ];
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/daemon; };
-        libName = "herdr_nexus_daemon";
-        dependencies = [
-          {
-            name = "core-meta-herdr-nexus";
-            packageId = "core-meta-herdr-nexus";
-          }
-          {
-            name = "emission-herdr-nexus";
-            packageId = "emission-herdr-nexus";
-          }
-          {
-            name = "herdr-nexus-core";
-            packageId = "herdr-nexus-core";
-          }
-          {
-            name = "herdr-nexus-wire";
-            packageId = "herdr-nexus-wire";
-          }
-          {
-            name = "meta-signal-herdr-nexus";
-            packageId = "meta-signal-herdr-nexus";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "nix";
-            packageId = "nix";
-            features = [ "fs" "poll" "user" ];
-          }
-          {
-            name = "rustix";
-            packageId = "rustix";
-            features = [ "event" "process" ];
-          }
-          {
-            name = "signal";
-            packageId = "signal";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "signal-herdr-nexus";
-            packageId = "signal-herdr-nexus";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "translator";
-            packageId = "translator";
-            rename = "shared-translator";
-            usesDefaultFeatures = false;
-            features = [ "unix" ];
-          }
-        ];
-
-      };
-      "herdr-nexus-translator" = rec {
-        crateName = "herdr-nexus-translator";
-        version = "0.2.0";
-        edition = "2021";
-        crateBin = [
-          {
-            name = "herdr-nexus";
-            path = "src/bin/herdr-nexus.rs";
-            requiredFeatures = [ "text" ];
-          }
-          {
-            name = "herdr-nexus-meta";
-            path = "src/bin/herdr-nexus-meta.rs";
-            requiredFeatures = [ "text" ];
-          }
-          {
-            name = "herdr-nexus-place";
-            path = "src/bin/herdr-nexus-place.rs";
-            requiredFeatures = [ "text" ];
-          }
-          {
-            name = "herdr-pair";
-            path = "src/bin/herdr-pair.rs";
-            requiredFeatures = [ "text" ];
-          }
-          {
-            name = "herdr-translator";
-            path = "src/bin/herdr-translator.rs";
-            requiredFeatures = [ "text" ];
-          }
-        ];
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/translator; };
-        libName = "herdr_nexus_translator";
-        dependencies = [
-          {
-            name = "core-meta-herdr-nexus";
-            packageId = "core-meta-herdr-nexus";
-          }
-          {
-            name = "datom-codec";
-            packageId = "datom-codec";
-            optional = true;
-          }
-          {
-            name = "emission-herdr-nexus";
-            packageId = "emission-herdr-nexus";
-          }
-          {
-            name = "herdr-nexus-wire";
-            packageId = "herdr-nexus-wire";
-          }
-          {
-            name = "libc";
-            packageId = "libc";
-          }
-          {
-            name = "meta-signal-herdr-nexus";
-            packageId = "meta-signal-herdr-nexus";
-            rename = "meta-signal-herdr-nexus";
-            features = [ "datom" ];
-          }
-          {
-            name = "nix";
-            packageId = "nix";
-            features = [ "fs" "poll" "process" "signal" "socket" "user" ];
-          }
-          {
-            name = "protos";
-            packageId = "protos";
-            optional = true;
-          }
-          {
-            name = "rkyv";
-            packageId = "rkyv";
-            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
-          }
-          {
-            name = "rustix";
-            packageId = "rustix";
-            features = [ "process" "rand" ];
-          }
-          {
-            name = "serde";
-            packageId = "serde";
-            features = [ "derive" ];
-          }
-          {
-            name = "serde_json";
-            packageId = "serde_json";
-          }
-          {
-            name = "signal";
-            packageId = "signal";
-          }
-          {
-            name = "signal-herdr-nexus";
-            packageId = "signal-herdr-nexus";
-          }
-          {
-            name = "translator";
-            packageId = "translator";
-            rename = "shared-translator";
-            features = [ "unix" ];
-          }
-        ];
-        features = {
-          "text" = [ "datom" "dep:protos" "dep:datom-codec" "signal-herdr-nexus/datom" "shared-translator/text" ];
-        };
-        resolvedDefaultFeatures = [ "datom" "default" "text" ];
-      };
-      "herdr-nexus-wire" = rec {
-        crateName = "herdr-nexus-wire";
-        version = "0.2.0";
-        edition = "2021";
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/wire; };
-        libName = "herdr_nexus_wire";
-        dependencies = [
-          {
-            name = "core-meta-herdr-nexus";
-            packageId = "core-meta-herdr-nexus";
-          }
-          {
-            name = "datom-codec";
-            packageId = "datom-codec";
-            optional = true;
-          }
-          {
-            name = "libc";
-            packageId = "libc";
-          }
-          {
-            name = "meta-signal-herdr-nexus";
-            packageId = "meta-signal-herdr-nexus";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "nix";
-            packageId = "nix";
-            features = [ "socket" ];
-          }
-          {
-            name = "protos";
-            packageId = "protos";
-            optional = true;
-          }
-          {
-            name = "rkyv";
-            packageId = "rkyv";
-            usesDefaultFeatures = false;
-            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
-          }
-          {
-            name = "signal";
-            packageId = "signal";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "signal-herdr-nexus";
-            packageId = "signal-herdr-nexus";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "tokio";
-            packageId = "tokio";
-            usesDefaultFeatures = false;
-            features = [ "macros" "io-util" ];
-          }
-          {
-            name = "translator";
-            packageId = "translator";
-            rename = "shared-translator";
-            usesDefaultFeatures = false;
-            features = [ "unix" ];
-          }
-        ];
-        features = {
-          "datom" = [ "dep:datom-codec" "dep:protos" "signal-herdr-nexus/datom" "core-meta-herdr-nexus/datom" "meta-signal-herdr-nexus/datom" "shared-translator/datom" ];
-        };
-        resolvedDefaultFeatures = [ "datom" "default" ];
-      };
       "indexmap" = rec {
         crateName = "indexmap";
         version = "2.14.2";
@@ -1052,17 +1052,17 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" ];
       };
-      "meta-signal-herdr-nexus" = rec {
-        crateName = "meta-signal-herdr-nexus";
+      "meta-signal-capsule-nexus" = rec {
+        crateName = "meta-signal-capsule-nexus";
         version = "0.4.1";
         edition = "2021";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "https://github.com/LiGoldragon/meta-signal-herdr-nexus";
-          rev = "bf27dc28a781b53aad553398faa27db1524651e6";
-          sha256 = "007jmhniy2gkh29q4m60ll9xj0rq6m5s3p0cl1nga5dsgalzix4x";
+          url = "https://github.com/LiGoldragon/meta-signal-capsule-nexus";
+          rev = "b8fde9e2be92f75945a208208d4b93d6e5fd7e69";
+          sha256 = "057saxdlfvsg1kcysi98f8m5ph8a407i7jgjxxxzavklkg0d3dvy";
         };
-        libName = "meta_signal_herdr_nexus";
+        libName = "meta_signal_capsule_nexus";
         dependencies = [
           {
             name = "datom-codec";
@@ -1860,17 +1860,17 @@ rec {
         };
         resolvedDefaultFeatures = [ "datom" "default" ];
       };
-      "signal-herdr-nexus" = rec {
-        crateName = "signal-herdr-nexus";
+      "signal-capsule-nexus" = rec {
+        crateName = "signal-capsule-nexus";
         version = "0.4.0";
         edition = "2021";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "https://github.com/LiGoldragon/signal-herdr-nexus";
-          rev = "10b9d215097504d5c911bb491ef8a5f276a3c683";
-          sha256 = "12fvhvyh0zaaf135pr7vm71alcyvv7fbdxp1ig5cr0r3c3nap8ck";
+          url = "https://github.com/LiGoldragon/signal-capsule-nexus";
+          rev = "dc941e72a31f7084f80b6fa8fe9aa49963acb4a1";
+          sha256 = "1hxhr2010pg6jb9926hmrm6gyb7c7bl6qfyf6xphfigz3p18m0jk";
         };
-        libName = "signal_herdr_nexus";
+        libName = "signal_capsule_nexus";
         dependencies = [
           {
             name = "datom-codec";

@@ -1,10 +1,10 @@
-use herdr_nexus_translator::maximum_text_budget;
-use herdr_nexus_translator::transport_types::{
+use capsule_nexus_translator::maximum_text_budget;
+use capsule_nexus_translator::transport_types::{
     Admission, CoreBootstrap, FrameCapacityBytes, FrameDeadlineMilliseconds,
     RetryDelayMilliseconds, TranslatorBootstrap,
 };
 use shared_translator::{PeerIdentity, ProcessId, UserId};
-use meta_signal_herdr_nexus::{BudgetValue, DepthLimit, NodeLimit};
+use meta_signal_capsule_nexus::{BudgetValue, DepthLimit, NodeLimit};
 use shared_translator::{FrameCapacity, FrameWriting, Signalizable};
 use std::{env, io};
 
@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         frame_capacity_bytes: FrameCapacityBytes(integer(arguments.next(), "FRAME_CAPACITY_BYTES")?),
         retry_delay_milliseconds: RetryDelayMilliseconds(integer(arguments.next(), "RETRY_DELAY_MILLISECONDS")?),
     };
-    herdr_nexus_wire::ValidAdmission::try_from(&admission)
+    capsule_nexus_wire::ValidAdmission::try_from(&admission)
         .map_err(|message| format!("invalid admission: {message}"))?;
     let place = shared_translator::decode::<shared_translator::Place>(
         &place_text,
@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut output = io::stdout();
     match target.as_str() {
         "Core" => {
-            let instance_id = signal_herdr_nexus::InstanceId(
+            let instance_id = signal_capsule_nexus::InstanceId(
                 arguments.next().ok_or("INSTANCE_ID")?,
             );
             output.write_frame(

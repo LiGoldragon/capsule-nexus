@@ -1,5 +1,5 @@
-use herdr_nexus_translator::TextClient;
-use herdr_nexus_translator::transport_types::Lane;
+use capsule_nexus_translator::TextClient;
+use capsule_nexus_translator::transport_types::Lane;
 use std::env;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("unexpected argument".into());
     }
     let place = shared_translator::placement::resolve_place(&name)?;
-    let names = herdr_nexus_wire::socket_names();
+    let names = capsule_nexus_wire::socket_names();
     let client = TextClient::new(
         shared_translator::placement::runtime_path(&place).join(names.meta_translator_socket.0),
         signal::MAXIMUM_SIGNAL_BYTES,

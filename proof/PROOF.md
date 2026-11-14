@@ -2,15 +2,15 @@
 
 ## Fixed Place first-launch proof — 2026-11-04
 
-Remote Nix built `/nix/store/slq0b02i6wrqlm7xgyidrriv4vkfn9bk-herdr-nexus-v1`.
+Remote Nix built `/nix/store/slq0b02i6wrqlm7xgyidrriv4vkfn9bk-capsule-nexus-v0`.
 The public launcher accepted exactly one inline Place:
 
 ```sh
-herdr-pair '{ one /run/user/1000/metaflow/one /home/one/.local/state/metaflow/one }'
+capsule-pair '{ one /run/user/1000/metaflow/one /home/one/.local/state/metaflow/one }'
 ```
 
-The installed public and meta clients used `herdr-nexus one '<Datom>'` and
-`herdr-nexus-meta one '<Datom>'`; they resolved the same runtime from
+The installed public and meta clients used `capsule-nexus one '<Datom>'` and
+`capsule-nexus-meta one '<Datom>'`; they resolved the same runtime from
 `XDG_RUNTIME_DIR` and `HOME` without a registry file. The proof launched two
 Places, reached both readiness gates, created, started, listed, subscribed,
 prompted, pressed, closed, and cleaned both owned runtimes and state fixtures.
@@ -24,9 +24,9 @@ valid meta and ordinary calls on the same pair.
 
 ## Paired front proof — 2026-11-04
 
-Remote Nix built `/nix/store/lxdbk269775akwn0cbdkdh9lfyrjhfyy-herdr-nexus-v1`.
+Remote Nix built `/nix/store/lxdbk269775akwn0cbdkdh9lfyrjhfyy-capsule-nexus-v0`.
 `proof/live-herdr.sh` launched two isolated metaflow directories through
-`herdr-pair`. The launcher obtained both child process IDs and supplied each
+`capsule-pair`. The launcher obtained both child process IDs and supplied each
 child the other child's typed peer identity before closing both bootstrap
 pipes. Each owner accepted its individual settings and reached `Ready`.
 
@@ -60,7 +60,7 @@ starts. Its exit trap closes those resources and prints their identities.
 Current remotely checked candidate (the change after the live run adds only the controlled stale-poll regression and this record):
 
 ```
-/nix/store/hzvd10rigadqxllcm7zab1yckyx6bc9z-herdr-nexus-v1
+/nix/store/hzvd10rigadqxllcm7zab1yckyx6bc9z-capsule-nexus-v0
 ```
 
 Rerun invocation:
@@ -68,7 +68,7 @@ Rerun invocation:
 ```sh
 PROOF_BASE=/tmp/herdr-v1-proof-af8fe3 \
   ./proof/live-herdr.sh \
-  /nix/store/hzvd10rigadqxllcm7zab1yckyx6bc9z-herdr-nexus-v1
+  /nix/store/hzvd10rigadqxllcm7zab1yckyx6bc9z-capsule-nexus-v0
 ```
 
 The proof observed both owners reach `Ready`, rejected a malformed meta

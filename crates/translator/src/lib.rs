@@ -5,11 +5,11 @@ pub mod server;
 pub mod generated {
     pub mod argument;
 }
-pub use herdr_nexus_wire::frame as transport;
-pub use herdr_nexus_wire::transport_types;
+pub use capsule_nexus_wire::frame as transport;
+pub use capsule_nexus_wire::transport_types;
 
-use herdr_nexus_wire::frame::{Frame, TransportError};
-use herdr_nexus_wire::transport_types::{Kind, Lane};
+use capsule_nexus_wire::frame::{Frame, TransportError};
+use capsule_nexus_wire::transport_types::{Kind, Lane};
 
 /// One text-lane connection to the translator. The CLI carries text only;
 /// typed signal begins behind the translator.

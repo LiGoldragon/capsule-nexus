@@ -1,4 +1,4 @@
-//! Pure herdr Nexus state transitions.
+//! Pure Capsule Nexus state transitions.
 //!
 //! The proof-of-concept Memory is deliberately process-lifetime and
 //! nondurable. External execution and textualization live outside this crate.
@@ -7,9 +7,9 @@ pub mod generated;
 
 pub use generated::operation::Operation;
 
-use emission_herdr_nexus::PaneObservation;
+use emission_capsule_nexus::PaneObservation;
 use generated::memory::{Answer, OwnedPane, PendingCreation};
-use signal_herdr_nexus::{
+use signal_capsule_nexus::{
     Attempt, Command, CreationId, Keys, Known, Label, MemoryRefusal, ObservedEffect, Outcome, Pane,
     Refusal, Session, State, StorePhase, StoreRefusal, Text,
 };
@@ -19,7 +19,7 @@ use std::collections::HashMap;
 pub enum ExternalResult<T> {
     Succeeded(T),
     Refused(Refusal),
-    Unavailable(signal_herdr_nexus::TransportRefusal),
+    Unavailable(signal_capsule_nexus::TransportRefusal),
     Uncertain,
 }
 
@@ -108,7 +108,7 @@ impl Memory for InMemory {
             owned.attempt = attempt;
             Answer::Succeeded
         } else {
-            Answer::Failed(MemoryRefusal(signal_herdr_nexus::Message(
+            Answer::Failed(MemoryRefusal(signal_capsule_nexus::Message(
                 "attempt target is not owned".into(),
             )))
         }
@@ -147,7 +147,7 @@ impl Memory for InMemory {
 
     fn store_pending(&mut self, pending: PendingCreation) -> Answer {
         if self.pending.contains_key(&pending.creation_id) {
-            return Answer::Failed(MemoryRefusal(signal_herdr_nexus::Message(
+            return Answer::Failed(MemoryRefusal(signal_capsule_nexus::Message(
                 "creation identifier is already pending".into(),
             )));
         }
@@ -157,12 +157,12 @@ impl Memory for InMemory {
 
     fn finish_created(&mut self, creation_id: &CreationId, pane: Pane) -> Answer {
         let Some(pending) = self.pending.get(creation_id).cloned() else {
-            return Answer::Failed(MemoryRefusal(signal_herdr_nexus::Message(
+            return Answer::Failed(MemoryRefusal(signal_capsule_nexus::Message(
                 "creation identifier is not pending".into(),
             )));
         };
         if self.panes.contains_key(&pane) {
-            return Answer::Failed(MemoryRefusal(signal_herdr_nexus::Message(
+            return Answer::Failed(MemoryRefusal(signal_capsule_nexus::Message(
                 "created pane is already owned".into(),
             )));
         }
@@ -184,7 +184,7 @@ impl Memory for InMemory {
         if self.pending.remove(creation_id).is_some() {
             Answer::Succeeded
         } else {
-            Answer::Failed(MemoryRefusal(signal_herdr_nexus::Message(
+            Answer::Failed(MemoryRefusal(signal_capsule_nexus::Message(
                 "creation identifier is not pending".into(),
             )))
         }
@@ -413,7 +413,7 @@ fn store_refused(memory_refusal: MemoryRefusal, store_phase: StorePhase) -> Outc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use signal_herdr_nexus::{
+    use signal_capsule_nexus::{
         InstanceId, Message, Name, PaneId, Root, Sequence, Value, Variable, Workspace,
     };
     use std::cell::Cell;
@@ -648,7 +648,7 @@ mod tests {
     #[test]
     fn external_refusal_is_preserved() {
         let refusal = Refusal {
-            error_code: signal_herdr_nexus::ErrorCode("agent_not_ready".into()),
+            error_code: signal_capsule_nexus::ErrorCode("agent_not_ready".into()),
             exit_status_option: None,
             message: Message("agent is busy".into()),
         };

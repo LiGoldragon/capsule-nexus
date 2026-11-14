@@ -4,11 +4,11 @@
 
 All six packages move to 0.2.0.
 
-**Pins.** signal-herdr-nexus 0.2.0 (`7c72`), meta-signal-herdr-nexus 0.2.1 (`5b89`), translator 0.3.1 (`1b0e`), signal 10.3.0 (`7afb`), datom-codec 0.33.0 (`eabe`) and protos 0.33.0 (`3c7a`); the generator is ethos-zero 19.2.0 (`5a5d`). The lock holds one source of each. The generated emission and transport projections add derives only. `ReaderBudget` is built with `try_from`.
+**Pins.** signal-capsule-nexus 0.2.0 (`7c72`), meta-signal-capsule-nexus 0.2.1 (`5b89`), translator 0.3.1 (`1b0e`), signal 10.3.0 (`7afb`), datom-codec 0.33.0 (`eabe`) and protos 0.33.0 (`3c7a`); the generator is ethos-zero 19.2.0 (`5a5d`). The lock holds one source of each. The generated emission and transport projections add derives only. `ReaderBudget` is built with `try_from`.
 
 **Where a place lives.** The translator this body used before, `3a43`, named the place `MetaflowName` and resolved its runtime and state below `metaflow/<name>`; the translator it now selects, `1b0e` (0.3.1, in the line that began with translator 0.2.0), names it `PlaceName` and resolves below `nexus/<name>`. The sandboxed checks and fixtures use the `nexus` layout.
 
-**Automatic place preparation.** The launcher (`herdr-pair`) and the direct daemon (`herdr-nexus-daemon`) both call translator's `prepare_for_start` on the place they are given: the launcher after validating the place and before its directory checks and before it starts either child, the daemon before it opens any socket or state. For a standard place, whose state is `<root>/nexus/<name>`, this
+**Automatic place preparation.** The launcher (`capsule-pair`) and the direct daemon (`capsule-nexus-daemon`) both call translator's `prepare_for_start` on the place they are given: the launcher after validating the place and before its directory checks and before it starts either child, the daemon before it opens any socket or state. For a standard place, whose state is `<root>/nexus/<name>`, this
 
 - moves a sole legacy state directory `<root>/metaflow/<name>` to `<root>/nexus/<name>` with a single rename, keeping every byte;
 - creates the runtime and state directories that are missing, at mode 0700;
