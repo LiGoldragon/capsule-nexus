@@ -48,7 +48,7 @@ done
 [[ -S $directory/capsule-meta.sock ]]
 
 meta="$package/bin/capsule-meta"
-public="$package/bin/capsule-nexus"
+public="$package/bin/capsule"
 "$meta" one "Configure.HerdrPath.$base/herdr-fixture" >/dev/null
 "$meta" one 'Configure.CallTimeout.50' >/dev/null
 "$meta" one 'Configure.OutputLimit.1048576' >/dev/null

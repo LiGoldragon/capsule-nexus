@@ -62,7 +62,7 @@ PY
   | grep -q Configured
 
 "$package/bin/capsule-meta" one \
-  "Configure.HerdrPath.$package/bin/capsule-nexus" | grep -q Configured
+  "Configure.HerdrPath.$package/bin/capsule" | grep -q Configured
 "$package/bin/capsule-meta" one 'Configure.CallTimeout.1000' | grep -q Configured
 "$package/bin/capsule-meta" one 'Configure.OutputLimit.1048576' | grep -q Configured
 "$package/bin/capsule-meta" one 'Configure.TextBudget.{ 1048576 64 }' | grep -q Ready
@@ -70,7 +70,7 @@ PY
 "$package/bin/capsule-meta" one 'Configure.TransportTimeout.1000' | grep -q Ready
 
 # The ordinary path on this same pair still accepts and answers a typed call.
-"$package/bin/capsule-nexus" one 'List.smoke' >"$base/ordinary.out"
+"$package/bin/capsule" one 'List.smoke' >"$base/ordinary.out"
 grep -Eq 'Listed|Refused|Unavailable' "$base/ordinary.out"
 kill -0 "$pair_pid"
 

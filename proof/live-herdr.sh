@@ -49,7 +49,7 @@ trap 'exit 143' TERM
 
 cat > "$base/herdr" <<WRAPPER
 #!/usr/bin/env bash
-exec "$package/bin/capsule-nexus" "\$@"
+exec "$package/bin/capsule" "\$@"
 WRAPPER
 cat > "$base/herdr-meta" <<WRAPPER
 #!/usr/bin/env bash

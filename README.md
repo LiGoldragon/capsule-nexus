@@ -1,6 +1,8 @@
 # capsule-nexus
 
-Fresh version 1 proof of the Nexus that owns herdr panes. The public, meta, and
+Branch `rename/capsule-cdc93e` holds the approved Capsule Nexus naming migration; flow `cdc93e` owns it. Deployment remains unchanged.
+
+Version 0 proof of the Nexus that owns herdr panes. The public, meta, and
 Emission contracts are authored in Ethos and generated without hand-written
 wire types. The pure core owns pane Memory and outcome transitions; the
 translator owns Datom, JSON, and process execution.
