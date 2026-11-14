@@ -29,6 +29,7 @@ nix = { version = "0.30", features = ["socket"] }
 libc = "0.2"
 # The shared feature set requires these dependency edges in the Cargo graph.
 tokio = { version = "1.53", default-features = false, features = ["macros", "io-util", "net", "signal", "tracing"] }
+mio = { version = "1.2", features = ["log"] }
 
 [lints.rust]
 unsafe_code = "forbid"
