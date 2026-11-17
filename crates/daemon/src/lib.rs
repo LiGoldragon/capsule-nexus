@@ -338,8 +338,14 @@ pub struct PublicConnection {
     ledger: std::sync::Mutex<signal::ExchangeLedger>,
     /// The subscriptions open on this connection, or `None` once the
     /// connection has ended.
-    subscriptions: std::sync::Mutex<Option<Vec<(signal::ExchangeId, Arc<SubscriberQueue>)>>>,
+    subscriptions: std::sync::Mutex<Option<Vec<CarriedSubscription>>>,
     authority: PublicAuthority,
+}
+
+/// A subscription open on an exchange of a connection.
+struct CarriedSubscription {
+    exchange: signal::ExchangeId,
+    queue: Arc<SubscriberQueue>,
 }
 
 /// Whether a connection goes on after the frame it just handled.
@@ -553,7 +559,10 @@ impl PublicConnection {
     /// already ended abandons it at once.
     fn carry(&self, exchange: signal::ExchangeId, queue: &Arc<SubscriberQueue>) {
         match self.subscriptions.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
-            Some(subscriptions) => subscriptions.push((exchange, Arc::clone(queue))),
+            Some(subscriptions) => subscriptions.push(CarriedSubscription {
+                exchange,
+                queue: Arc::clone(queue),
+            }),
             None => queue.close(Closing::Abandoned),
         }
     }
@@ -561,8 +570,8 @@ impl PublicConnection {
     fn withdrawn(&self, exchange: signal::ExchangeId) -> Option<Arc<SubscriberQueue>> {
         let mut subscriptions = self.subscriptions.lock().unwrap_or_else(|p| p.into_inner());
         let subscriptions = subscriptions.as_mut()?;
-        let at = subscriptions.iter().position(|(carried, _)| *carried == exchange)?;
-        Some(subscriptions.remove(at).1)
+        let at = subscriptions.iter().position(|carried| carried.exchange == exchange)?;
+        Some(subscriptions.remove(at).queue)
     }
 
     /// Ends a subscription's exchange as its queue's closing says.
@@ -625,8 +634,8 @@ impl PublicConnection {
     /// reads the end of the stream.
     fn end(&self) {
         let carried = self.subscriptions.lock().unwrap_or_else(|p| p.into_inner()).take();
-        for (_, queue) in carried.into_iter().flatten() {
-            queue.close(Closing::Abandoned);
+        for carried in carried.into_iter().flatten() {
+            carried.queue.close(Closing::Abandoned);
         }
         let _ = self.stream.shutdown(std::net::Shutdown::Both);
     }
