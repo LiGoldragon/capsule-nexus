@@ -257,7 +257,7 @@ rec {
       };
       "capsule-nexus-core" = rec {
         crateName = "capsule-nexus-core";
-        version = "0.5.0";
+        version = "0.6.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/core; };
         libName = "capsule_nexus_core";
@@ -329,7 +329,7 @@ rec {
       };
       "capsule-nexus-daemon" = rec {
         crateName = "capsule-nexus-daemon";
-        version = "0.5.0";
+        version = "0.6.0";
         edition = "2021";
         crateBin = [
           {
@@ -414,7 +414,7 @@ rec {
       };
       "capsule-nexus-translator" = rec {
         crateName = "capsule-nexus-translator";
-        version = "0.5.0";
+        version = "0.6.0";
         edition = "2021";
         crateBin = [
           {
@@ -524,7 +524,7 @@ rec {
       };
       "capsule-nexus-wire" = rec {
         crateName = "capsule-nexus-wire";
-        version = "0.5.0";
+        version = "0.6.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/wire; };
         libName = "capsule_nexus_wire";
@@ -1627,13 +1627,13 @@ rec {
       };
       "nexus" = rec {
         crateName = "nexus";
-        version = "0.8.0";
+        version = "0.9.0";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/nexus";
-          rev = "4765dd629126d31db8e13bdd338b55682fef2011";
-          sha256 = "1if2kc9ybzxwjjh2klbd3dnw1dl7wycwqds96qfm1c6qnn2gddx8";
+          rev = "d020a62d9258c9d8682faedf77252d8778ed0857";
+          sha256 = "1lvnjlpaky1mgwngq4idkcd4mra4j7a5kvnaraz8v57fs9zskj4d";
         };
         dependencies = [
           {
@@ -2405,13 +2405,13 @@ rec {
       };
       "signal-capsule-nexus" = rec {
         crateName = "signal-capsule-nexus";
-        version = "2.0.0";
+        version = "3.0.0";
         edition = "2021";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/signal-capsule-nexus";
-          rev = "49b4ab138e006e9ee0dc06f7c9850bd003a6b138";
-          sha256 = "1q1f7y0h08szd8fa74nlv2gn8arc7zzkwd31jy2vv9c3436fp7n8";
+          rev = "c0194987e9133126e3c8b2d4530e247ec437ee67";
+          sha256 = "0nnm5hqlwgxb8i7ds6n75aqrda4ajw5nvvjr38358j4hn81j8dr2";
         };
         libName = "signal_capsule_nexus";
         dependencies = [

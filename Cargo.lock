@@ -51,7 +51,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "capsule-nexus-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "datom-codec",
  "emission-capsule-nexus",
@@ -67,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "capsule-nexus-daemon"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "capsule-nexus-core",
  "capsule-nexus-wire",
@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "capsule-nexus-translator"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "capsule-nexus-wire",
  "core-meta-capsule-nexus",
@@ -108,7 +108,7 @@ dependencies = [
 
 [[package]]
 name = "capsule-nexus-wire"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "core-meta-capsule-nexus",
  "datom-codec",
@@ -468,8 +468,8 @@ dependencies = [
 
 [[package]]
 name = "nexus"
-version = "0.8.0"
-source = "git+https://github.com/LiGoldragon/nexus?rev=4765dd6#4765dd629126d31db8e13bdd338b55682fef2011"
+version = "0.9.0"
+source = "git+https://github.com/LiGoldragon/nexus?rev=d020a62#d020a62d9258c9d8682faedf77252d8778ed0857"
 dependencies = [
  "ethos-zero 30.0.0",
  "futures-util",
@@ -685,8 +685,8 @@ dependencies = [
 
 [[package]]
 name = "signal-capsule-nexus"
-version = "2.0.0"
-source = "git+https://github.com/LiGoldragon/signal-capsule-nexus?rev=49b4ab138e006e9ee0dc06f7c9850bd003a6b138#49b4ab138e006e9ee0dc06f7c9850bd003a6b138"
+version = "3.0.0"
+source = "git+https://github.com/LiGoldragon/signal-capsule-nexus?rev=c0194987e9133126e3c8b2d4530e247ec437ee67#c0194987e9133126e3c8b2d4530e247ec437ee67"
 dependencies = [
  "datom-codec",
  "protos",

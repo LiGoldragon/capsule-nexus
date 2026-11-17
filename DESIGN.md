@@ -64,7 +64,9 @@ The Nexus and translator each own a partial configuration. One flat typed
 `Set` validates and applies one field; refusal preserves the previous partial
 snapshot. The Nexus owns start, polling, frame-capacity, transport and
 subscriber-capacity limits; the subscriber capacity is the capacity a session's
-Publisher is made with.
+Publisher is made with, and a Configure of it resizes every session's Publisher
+in the actor's turn, each open stream following it: one more than the new
+capacity behind is handed `Lagged` with the panes as they stand and goes on.
 The translator owns the herdr path, call timeout, output limit and text budget.
 Each process reports the fields it still awaits and becomes ready only when
 all of its fields are present and their cross-field constraints hold. Defaults
@@ -101,9 +103,10 @@ identity as they were. Every frame the Nexus sends names its exchange.
 
 A one-answer input is answered by one `Delivery::Answer` on its exchange, and
 the exchange ends with it. A Subscribe is an exchange that goes on answering,
-one Answer per frame of its stream, `Subscribed.Stream<Panes Changed>`:
+one Answer per frame of its stream, `Subscribed.Stream<Panes Known>`:
 `Opened` first, with the panes the Capsule holds in the session that are not
-Dead, whoever owns them; then each `Changed`; and `Lagged` with the panes anew
+Dead, whoever owns them; then each pane that moved as `Changed`, its `Known`
+whole; and `Lagged` with the panes anew
 for a subscriber that fell more than the subscriber capacity behind, which goes
 on from them. A refused Subscribe is answered once, `SubscribeRefused`.
 Observing is open; acting stays the owner's. A subscription withdrawn with its
@@ -115,8 +118,9 @@ Memory, ownership, reservations and revisions, and for each session that has a
 subscriber one `nexus::Publisher` over its panes, which holds the published
 state once. Each step an attempt makes on that state is one message; herdr calls
 run between the steps on the runtime's blocking pool. The operation that
-changes Memory publishes the change when Memory answers `Succeeded` and the
-pane's state moved, so a pane is told Dead once and leaves the state. The
+changes Memory publishes the pane's `Known` whole when Memory answers
+`Succeeded` and the Known moved, its label, state or attempt, so a Start's label
+reaches every open stream and a pane is told Dead once and leaves the state. The
 Publisher is made at a session's first Subscribe and dropped with its last
 stream. While it lives, the session's feed observes the session with List's
 herdr calls once per polling interval and reconciles what it sees into Memory,

@@ -1,5 +1,25 @@
 # Upgrades
 
+## 0.6.0 — each pane moved is published whole; the subscriber capacity resizes
+
+core, daemon, wire and the translator move to 0.6.0; core-meta and emission
+stay at 0.4.0.
+
+**Pins.** signal-capsule-nexus 3.0.0 (`c019`), nexus 0.9.0 (`d020`); build-base
+registers them. signal 11.2.0, translator 0.5.2 and meta-signal-capsule-nexus
+1.0.1 stay.
+
+**The wire.** A Subscribe's stream is `Subscribed.Stream<Panes Known>`: each
+`Changed` carries the pane's `Known` whole, its label and attempt with its
+state, so a label given at Start reaches every open stream. A pane is published
+whenever its Known moved: a state, a label, or an attempt made Uncertain or
+settled. A Known whose state is Dead takes the pane out.
+
+**Configure.** A `SubscriberCapacity` Configure resizes every session's
+Publisher in the Capsule actor's turn (`nexus::Publishing::resize`); each open
+stream follows the new capacity, one further behind than it is handed `Lagged`
+with the panes as they stand, then goes on exact.
+
 ## 0.5.0 — Subscribe is answered by a stream from a Publisher
 
 core, daemon, wire and the translator move to 0.5.0; core-meta and emission

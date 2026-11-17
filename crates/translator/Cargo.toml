@@ -1,6 +1,6 @@
 [package]
 name = "capsule-nexus-translator"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 publish = false
 
@@ -19,7 +19,7 @@ datom-codec = { git = "https://github.com/LiGoldragon/datom-codec", rev = "09a05
 
 [dependencies.signal-capsule-nexus]
 git = "https://github.com/LiGoldragon/signal-capsule-nexus"
-rev = "49b4ab138e006e9ee0dc06f7c9850bd003a6b138"
+rev = "c0194987e9133126e3c8b2d4530e247ec437ee67"
 
 [dependencies.shared-translator]
 package = "translator"

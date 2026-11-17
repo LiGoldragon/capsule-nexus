@@ -7,10 +7,10 @@ edition = "2021"
 rust-version = "1.89"
 
 [workspace.dependencies]
-signal-capsule-nexus = { git = "https://github.com/LiGoldragon/signal-capsule-nexus", rev = "49b4ab138e006e9ee0dc06f7c9850bd003a6b138", default-features = false }
+signal-capsule-nexus = { git = "https://github.com/LiGoldragon/signal-capsule-nexus", rev = "c0194987e9133126e3c8b2d4530e247ec437ee67", default-features = false }
 meta-signal-capsule-nexus = { git = "https://github.com/LiGoldragon/meta-signal-capsule-nexus", rev = "76b4235650b6b1940478c30fc992d17c6e0e0459", default-features = false }
 signal = { git = "https://github.com/LiGoldragon/signal", rev = "4f5cbb9", default-features = false }
-nexus = { git = "https://github.com/LiGoldragon/nexus", rev = "4765dd6", default-features = false }
+nexus = { git = "https://github.com/LiGoldragon/nexus", rev = "d020a62", default-features = false }
 kameo = "0.22"
 tokio = { version = "1.53", default-features = false }
 futures-util = { version = "0.3", default-features = false }

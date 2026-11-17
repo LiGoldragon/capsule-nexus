@@ -5,9 +5,10 @@
 //!
 //! The Core also holds what a session's subscribers see: one
 //! [`nexus::Publisher`] per session that has a subscriber, its state the
-//! session's panes that are not Dead. A change is published by the operation
-//! that made it, once Memory answers that it succeeded, and only when the
-//! pane's state moved.
+//! session's panes that are not Dead. A change is the pane whole, its
+//! [`Known`]: it is published by the operation that made it, once Memory
+//! answers that it succeeded, and only when the Known moved. A Configure of
+//! the subscriber capacity resizes every session's Publisher.
 
 pub mod generated;
 
@@ -15,9 +16,9 @@ pub use generated::operation::Operation;
 
 use emission_capsule_nexus::PaneObservation;
 use generated::memory::{Answer, OwnedPane, PendingCreation};
-use nexus::{Capacity, Publisher, Publishing};
+use nexus::{Capacity, Publisher, Publishing, Reached};
 use signal_capsule_nexus::{
-    Attempt, Changed, Command, CreationId, Keys, Known, Label, MemoryRefusal, ObservedEffect,
+    Attempt, Command, CreationId, Keys, Known, Label, MemoryRefusal, ObservedEffect,
     Outcome, Pane, Panes, Refusal, Session, State, StorePhase, StoreRefusal, Text,
 };
 use std::collections::HashMap;
@@ -211,6 +212,18 @@ fn reconciled_state(owned: &OwnedPane, seen: Option<&PaneObservation>) -> State 
     }
 }
 
+/// An owned pane as a subscriber sees it.
+impl From<&OwnedPane> for Known {
+    fn from(owned: &OwnedPane) -> Self {
+        Known {
+            pane: owned.pane.clone(),
+            label_option: owned.label_option.clone(),
+            state: owned.state.clone(),
+            attempt: owned.attempt.clone(),
+        }
+    }
+}
+
 pub struct Core<M> {
     memory: M,
     publications: HashMap<Session, Publication>,
@@ -220,7 +233,7 @@ pub struct Core<M> {
 /// end of the feed that observes the session for it, sent when the last
 /// stream is dropped.
 struct Publication {
-    publisher: Publisher<Panes, Changed>,
+    publisher: Publisher<Panes, Known>,
     streams: usize,
     feed: tokio::sync::oneshot::Sender<()>,
 }
@@ -229,7 +242,7 @@ struct Publication {
 /// Publisher carries the feed's end: it resolves when the publication is
 /// dropped with its last stream.
 pub struct Subscription {
-    pub stream: signal::Stream<Panes, Changed>,
+    pub stream: signal::Stream<Panes, Known>,
     pub feed: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
@@ -265,21 +278,35 @@ impl<M> Core<M> {
         self.publications.len()
     }
 
-    /// Hands a change to the session's subscribers when the pane's state
+    /// Moves every session's Publisher to the capacity; each open stream
+    /// follows it. Yields the streams moved, across every session.
+    pub fn resize(&mut self, capacity: Capacity) -> Reached {
+        Reached(
+            self.publications
+                .values_mut()
+                .map(|publication| {
+                    publication
+                        .publisher
+                        .resize(capacity)
+                        .expect("the configured subscriber capacity is validated positive")
+                        .0
+                })
+                .sum(),
+        )
+    }
+
+    /// Hands the pane whole to the session's subscribers when its Known
     /// moved: a pane is told Dead once, and a pane first seen Dead is not told.
-    fn publish(&self, pane: &Pane, before: Option<&State>, after: &State) {
+    fn publish(&self, before: Option<&Known>, after: Known) {
         let moved = match before {
-            Some(before) => before != after,
-            None => *after != State::Dead,
+            Some(before) => *before != after,
+            None => after.state != State::Dead,
         };
         if !moved {
             return;
         }
-        if let Some(publication) = self.publications.get(&pane.session) {
-            publication.publisher.publish(Changed {
-                pane: pane.clone(),
-                state: after.clone(),
-            });
+        if let Some(publication) = self.publications.get(&after.pane.session) {
+            publication.publisher.publish(after);
         }
     }
 }
@@ -297,7 +324,15 @@ impl<M: Memory> Core<M> {
             ExternalResult::Succeeded(pane) => {
                 match self.memory.finish_created(&creation_id, pane.clone()) {
                     Answer::Succeeded => {
-                        self.publish(&pane, None, &State::Open);
+                        self.publish(
+                            None,
+                            Known {
+                                pane: pane.clone(),
+                                label_option: None,
+                                state: State::Open,
+                                attempt: Attempt::Settled,
+                            },
+                        );
                         Outcome::Created(pane)
                     }
                     Answer::Failed(refusal) => {
@@ -336,13 +371,14 @@ impl<M: Memory> Core<M> {
         };
         match external {
             ExternalResult::Succeeded(state) => {
-                let before = owned.state.clone();
+                let before = Known::from(&owned);
                 owned.label_option = Some(label);
-                owned.state = state.clone();
+                owned.state = state;
                 owned.attempt = Attempt::Settled;
+                let after = Known::from(&owned);
                 match self.memory.store_owned(owned) {
                     Answer::Succeeded => {
-                        self.publish(&pane, Some(&before), &state);
+                        self.publish(Some(&before), after);
                         Outcome::Done
                     }
                     Answer::Failed(refusal) => {
@@ -352,40 +388,45 @@ impl<M: Memory> Core<M> {
             }
             ExternalResult::Refused(refusal) => Outcome::Refused(refusal),
             ExternalResult::Unavailable(refusal) => Outcome::Unavailable(refusal),
-            ExternalResult::Uncertain => self.retain_uncertain(&pane),
+            ExternalResult::Uncertain => self.retain_uncertain(&owned),
         }
     }
 
     pub fn prompt(&mut self, pane: Pane, _text: Text, external: ExternalResult<()>) -> Outcome {
-        if let Err(outcome) = self.require_owned(&pane) {
-            return outcome;
+        match self.require_owned(&pane) {
+            Ok(owned) => self.finish_done(&owned, external),
+            Err(outcome) => outcome,
         }
-        self.finish_done(pane, external)
     }
 
     pub fn press(&mut self, pane: Pane, _keys: Keys, external: ExternalResult<()>) -> Outcome {
-        if let Err(outcome) = self.require_owned(&pane) {
-            return outcome;
+        match self.require_owned(&pane) {
+            Ok(owned) => self.finish_done(&owned, external),
+            Err(outcome) => outcome,
         }
-        self.finish_done(pane, external)
     }
 
     pub fn close(&mut self, pane: Pane, external: ExternalResult<()>) -> Outcome {
-        let before = match self.require_owned(&pane) {
-            Ok(owned) => owned.state,
+        let owned = match self.require_owned(&pane) {
+            Ok(owned) => owned,
             Err(outcome) => return outcome,
         };
         match external {
             ExternalResult::Succeeded(()) => match self.memory.close_owned(&pane) {
                 Answer::Succeeded => {
-                    self.publish(&pane, Some(&before), &State::Dead);
+                    let before = Known::from(&owned);
+                    let after = Known {
+                        state: State::Dead,
+                        ..before.clone()
+                    };
+                    self.publish(Some(&before), after);
                     Outcome::Done
                 }
                 Answer::Failed(refusal) => store_refused(refusal, StorePhase::Observed(ObservedEffect::Done)),
             },
             ExternalResult::Refused(refusal) => Outcome::Refused(refusal),
             ExternalResult::Unavailable(refusal) => Outcome::Unavailable(refusal),
-            ExternalResult::Uncertain => self.retain_uncertain(&pane),
+            ExternalResult::Uncertain => self.retain_uncertain(&owned),
         }
     }
 
@@ -407,8 +448,8 @@ impl<M: Memory> Core<M> {
                 };
                 let before = match self.memory.owned_in_session(&session) {
                     Ok(owned) => owned
-                        .into_iter()
-                        .map(|owned| (owned.pane, owned.state))
+                        .iter()
+                        .map(|owned| (owned.pane.clone(), Known::from(owned)))
                         .collect::<HashMap<_, _>>(),
                     Err(refusal) => {
                         return store_refused(
@@ -419,8 +460,13 @@ impl<M: Memory> Core<M> {
                 };
                 match self.memory.reconcile_listing(&session, &observed) {
                     Answer::Succeeded => {
+                        // The listing settles every attempt, as Memory records.
                         for known in &projected {
-                            self.publish(&known.pane, before.get(&known.pane), &known.state);
+                            let after = Known {
+                                attempt: Attempt::Settled,
+                                ..known.clone()
+                            };
+                            self.publish(before.get(&known.pane), after);
                         }
                         Outcome::Listed(projected)
                     }
@@ -453,12 +499,7 @@ impl<M: Memory> Core<M> {
             .map_err(|refusal| store_refused(refusal, StorePhase::BeforeEmission))?
             .into_iter()
             .filter(|owned| owned.state != State::Dead)
-            .map(|owned| Known {
-                pane: owned.pane,
-                label_option: owned.label_option,
-                state: owned.state,
-                attempt: owned.attempt,
-            })
+            .map(|owned| Known::from(&owned))
             .collect::<Vec<_>>();
         living.sort_by(|left, right| left.pane.pane_id.cmp(&right.pane.pane_id));
         let publisher = Publisher::create(Panes(living), capacity)
@@ -508,25 +549,41 @@ impl<M: Memory> Core<M> {
             .map_err(|refusal| store_refused(refusal, StorePhase::BeforeEmission))
     }
 
-    fn finish_done(&mut self, pane: Pane, external: ExternalResult<()>) -> Outcome {
+    fn finish_done(&mut self, owned: &OwnedPane, external: ExternalResult<()>) -> Outcome {
         match external {
-            ExternalResult::Succeeded(()) => match self.memory.store_attempt(&pane, Attempt::Settled) {
-                Answer::Succeeded => Outcome::Done,
-                Answer::Failed(refusal) => store_refused(
-                    refusal,
-                    StorePhase::Observed(ObservedEffect::Done),
-                ),
-            },
+            ExternalResult::Succeeded(()) => {
+                self.record_attempt(owned, Attempt::Settled, Outcome::Done, StorePhase::Observed(ObservedEffect::Done))
+            }
             ExternalResult::Refused(refusal) => Outcome::Refused(refusal),
             ExternalResult::Unavailable(refusal) => Outcome::Unavailable(refusal),
-            ExternalResult::Uncertain => self.retain_uncertain(&pane),
+            ExternalResult::Uncertain => self.retain_uncertain(owned),
         }
     }
 
-    fn retain_uncertain(&mut self, pane: &Pane) -> Outcome {
-        match self.memory.store_attempt(pane, Attempt::Uncertain) {
-            Answer::Succeeded => Outcome::Uncertain,
-            Answer::Failed(refusal) => store_refused(refusal, StorePhase::Uncertain),
+    fn retain_uncertain(&mut self, owned: &OwnedPane) -> Outcome {
+        self.record_attempt(owned, Attempt::Uncertain, Outcome::Uncertain, StorePhase::Uncertain)
+    }
+
+    /// Records the pane's attempt and publishes the pane when it moved; the
+    /// outcome when Memory records it, else the refusal in its phase.
+    fn record_attempt(
+        &mut self,
+        owned: &OwnedPane,
+        attempt: Attempt,
+        outcome: Outcome,
+        phase: StorePhase,
+    ) -> Outcome {
+        match self.memory.store_attempt(&owned.pane, attempt.clone()) {
+            Answer::Succeeded => {
+                let before = Known::from(owned);
+                let after = Known {
+                    attempt,
+                    ..before.clone()
+                };
+                self.publish(Some(&before), after);
+                outcome
+            }
+            Answer::Failed(refusal) => store_refused(refusal, phase),
         }
     }
 }
@@ -862,8 +919,27 @@ mod tests {
         ExternalResult::Succeeded(vec![PaneObservation { pane: pane(), state }])
     }
 
-    fn frame_of(state: State) -> signal::Frame<Panes, Changed> {
-        signal::Frame::Changed(Changed { pane: pane(), state })
+    fn known_of(state: State) -> Known {
+        Known {
+            pane: pane(),
+            label_option: Some(Label("mind/versionOne".into())),
+            state,
+            attempt: Attempt::Settled,
+        }
+    }
+
+    fn frame_of(state: State) -> signal::Frame<Panes, Known> {
+        signal::Frame::Changed(known_of(state))
+    }
+
+    fn command() -> Command {
+        use signal_capsule_nexus::{AgentKind, AgentName, Executable};
+        Command {
+            agent_name: AgentName("probe".into()),
+            agent_kind: AgentKind::Codex,
+            executable: Executable::Configured,
+            string_vector: Vec::new(),
+        }
     }
 
     fn panes_of(state: State) -> Panes {
@@ -948,6 +1024,73 @@ mod tests {
         assert!(matches!(core.list(pane().session, observed(State::Idle)), Outcome::Listed(_)));
         assert_eq!(stream.next().await, Some(signal::Frame::Opened(panes_of(State::Open))));
         assert_eq!(stream.next().await, Some(frame_of(State::Idle)));
+    }
+
+    #[tokio::test]
+    async fn a_start_publishes_the_pane_whole_with_its_label() {
+        use futures_util::StreamExt;
+        let mut core = Core::new(seeded());
+        let Subscription { mut stream, .. } = core
+            .subscribe(&pane().session, Capacity(8))
+            .expect("Memory gives the panes");
+        let started = core.start(
+            pane(),
+            command(),
+            Label("mind/designer".into()),
+            ExternalResult::Succeeded(State::Open),
+        );
+        assert_eq!(started, Outcome::Done);
+        assert_eq!(stream.next().await, Some(signal::Frame::Opened(panes_of(State::Open))));
+        assert_eq!(
+            stream.next().await,
+            Some(signal::Frame::Changed(Known {
+                label_option: Some(Label("mind/designer".into())),
+                ..known_of(State::Open)
+            }))
+        );
+    }
+
+    #[tokio::test]
+    async fn an_attempt_that_moved_is_published_and_settled_by_the_listing() {
+        use futures_util::StreamExt;
+        let mut core = Core::new(seeded());
+        let Subscription { mut stream, .. } = core
+            .subscribe(&pane().session, Capacity(8))
+            .expect("Memory gives the panes");
+        assert_eq!(core.prompt(pane(), Text("hello".into()), ExternalResult::Uncertain), Outcome::Uncertain);
+        assert_eq!(core.prompt(pane(), Text("hello".into()), ExternalResult::Uncertain), Outcome::Uncertain);
+        assert!(matches!(core.list(pane().session, observed(State::Open)), Outcome::Listed(_)));
+        assert_eq!(stream.next().await, Some(signal::Frame::Opened(panes_of(State::Open))));
+        assert_eq!(
+            stream.next().await,
+            Some(signal::Frame::Changed(Known {
+                attempt: Attempt::Uncertain,
+                ..known_of(State::Open)
+            }))
+        );
+        assert_eq!(stream.next().await, Some(frame_of(State::Open)));
+    }
+
+    #[tokio::test]
+    async fn a_resize_moves_every_open_stream_of_every_session() {
+        use futures_util::StreamExt;
+        let mut core = Core::new(seeded());
+        let Subscription { mut stream, .. } = core
+            .subscribe(&pane().session, Capacity(8))
+            .expect("Memory gives the panes");
+        let _second = core
+            .subscribe(&pane().session, Capacity(8))
+            .expect("a second stream opens on the Publisher");
+        let other = Session("other".into());
+        let _third = core.subscribe(&other, Capacity(8)).expect("an empty session subscribes");
+        for state in [State::Busy, State::Idle] {
+            assert!(matches!(core.list(pane().session, observed(state)), Outcome::Listed(_)));
+        }
+        assert_eq!(core.resize(Capacity(1)), Reached(3));
+        assert_eq!(stream.next().await, Some(signal::Frame::Opened(panes_of(State::Open))));
+        assert_eq!(stream.next().await, Some(signal::Frame::Lagged(panes_of(State::Idle))));
+        assert!(matches!(core.list(pane().session, observed(State::Busy)), Outcome::Listed(_)));
+        assert_eq!(stream.next().await, Some(frame_of(State::Busy)));
     }
 
     #[test]

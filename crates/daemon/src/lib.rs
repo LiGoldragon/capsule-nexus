@@ -546,7 +546,7 @@ impl PublicConnection {
         exchange: signal::ExchangeId,
         principal: shared_translator::Principal,
         peer_grant: Option<(shared_translator::PeerId, u64)>,
-        stream: signal::Stream<signal_capsule_nexus::Panes, signal_capsule_nexus::Changed>,
+        stream: signal::Stream<signal_capsule_nexus::Panes, signal_capsule_nexus::Known>,
     ) {
         let closing = Arc::new(SubscriptionClosing::default());
         if let shared_translator::Principal::Peer(peer_id) = &principal {
@@ -570,7 +570,7 @@ impl PublicConnection {
         &self,
         dispatcher: &Dispatcher,
         exchange: signal::ExchangeId,
-        mut stream: signal::Stream<signal_capsule_nexus::Panes, signal_capsule_nexus::Changed>,
+        mut stream: signal::Stream<signal_capsule_nexus::Panes, signal_capsule_nexus::Known>,
         closing: Arc<SubscriptionClosing>,
     ) {
         use futures_util::StreamExt;
@@ -1098,7 +1098,7 @@ impl Capsule {
         let frames: std::pin::Pin<
             Box<
                 dyn futures_util::Stream<
-                        Item = signal::Frame<signal_capsule_nexus::Panes, signal_capsule_nexus::Changed>,
+                        Item = signal::Frame<signal_capsule_nexus::Panes, signal_capsule_nexus::Known>,
                     > + Send,
             >,
         > = Box::pin(frames);
@@ -1106,6 +1106,13 @@ impl Capsule {
             stream: signal::Stream::from(frames),
             feed,
         })
+    }
+
+    /// Moves every session's Publisher to the configured subscriber
+    /// capacity; each open stream follows it.
+    #[message]
+    fn resize_publishers(&mut self, capacity: nexus::Capacity) {
+        self.core.resize(capacity);
     }
 
     /// One stream of the session was dropped.
@@ -1200,6 +1207,7 @@ impl Dispatcher {
             let _entered = runtime.enter();
             Capsule::spawn_with_mailbox(Capsule::new(instance_id), kameo::mailbox::unbounded())
         };
+        configuration.hold_publishers_in(capsule.clone());
         Self {
             capsule,
             emitter: Arc::new(SocketEmitter {
@@ -1912,6 +1920,9 @@ pub struct ConfigurationStore {
     peer_subscriptions: std::sync::Mutex<std::collections::HashMap<shared_translator::PeerId, Vec<std::sync::Weak<SubscriptionClosing>>>>,
     peers: std::sync::Mutex<std::collections::HashMap<shared_translator::PeerId, BoundPeer>>,
     next_peer_generation: std::sync::atomic::AtomicU64,
+    /// The actor that holds every session's Publisher, told each subscriber
+    /// capacity configured.
+    capsule: std::sync::OnceLock<kameo::actor::ActorRef<Capsule>>,
 }
 
 struct BoundPeer {
@@ -2072,6 +2083,9 @@ impl ConfigurationStore {
         if let Some(validated) = validated {
             *self.current.write().unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(validated));
         }
+        if let core_meta_capsule_nexus::CoreSet::SubscriberCapacity(capacity) = &applied {
+            self.resize_publishers(nexus::Capacity(*capacity));
+        }
         Output::Configured(core_meta_capsule_nexus::Configured_Data {
             core_set: applied,
             readiness,
@@ -2192,6 +2206,20 @@ impl ConfigurationStore {
             .or_default()
             .push(Arc::downgrade(closing));
         true
+    }
+
+    /// Tells the actor that holds the Publishers each subscriber capacity
+    /// configured from now on.
+    fn hold_publishers_in(&self, capsule: kameo::actor::ActorRef<Capsule>) {
+        let _ = self.capsule.set(capsule);
+    }
+
+    /// Moves every session's Publisher to the capacity, in the actor's turn.
+    /// An actor that is gone holds no Publisher to move.
+    fn resize_publishers(&self, capacity: nexus::Capacity) {
+        if let Some(capsule) = self.capsule.get() {
+            let _ = capsule.tell(ResizePublishers { capacity }).try_send();
+        }
     }
 
     pub fn snapshot(&self) -> Option<Arc<ReadyCoreConfiguration>> {
@@ -3204,7 +3232,7 @@ mod tests {
         }
     }
 
-    type Frame = signal::Frame<signal_capsule_nexus::Panes, signal_capsule_nexus::Changed>;
+    type Frame = signal::Frame<signal_capsule_nexus::Panes, signal_capsule_nexus::Known>;
 
     fn known(
         pane: &signal_capsule_nexus::Pane,
@@ -3224,10 +3252,7 @@ mod tests {
     }
 
     fn changed(pane: &signal_capsule_nexus::Pane, state: signal_capsule_nexus::State) -> Frame {
-        signal::Frame::Changed(signal_capsule_nexus::Changed {
-            pane: pane.clone(),
-            state,
-        })
+        signal::Frame::Changed(known(pane, Some("flow"), state))
     }
 
     /// The next frame of the subscription on the first exchange.
