@@ -574,26 +574,15 @@ impl PublicConnection {
         Some(subscriptions.remove(at).queue)
     }
 
-    /// Ends a subscription's exchange as its queue's closing says.
-    fn conclude(
-        &self,
-        exchange: signal::ExchangeId,
-        closing: Closing,
-        configuration: Option<Arc<ReadyCoreConfiguration>>,
-    ) {
-        use signal::{Delivery, Ending, ExchangeFault, ExchangeTracking};
+    /// Concludes a subscription as its queue's closing says: a subscriber
+    /// that fell behind or whose authority is gone has its connection closed.
+    fn conclude(&self, exchange: signal::ExchangeId, closing: Closing) {
+        use signal::ExchangeTracking;
         self.withdrawn(exchange);
-        let released = self.ledger.lock().unwrap_or_else(|p| p.into_inner()).release(exchange);
-        match (closing, configuration) {
-            (Closing::Abandoned, _) => {}
-            (Closing::Lagged, Some(configuration)) if released.is_ok() => {
-                let ending = Ending::faulted(exchange, ExchangeFault::Lagged);
-                if self.deliver(Delivery::End(ending), &configuration).is_err() {
-                    self.end();
-                }
-            }
-            (Closing::Lagged, _) => {}
-            (Closing::Withdrawn, _) => self.end(),
+        let _ = self.ledger.lock().unwrap_or_else(|p| p.into_inner()).release(exchange);
+        match closing {
+            Closing::Abandoned => {}
+            Closing::Lagged | Closing::Withdrawn => self.end(),
         }
     }
 
@@ -716,8 +705,8 @@ struct SubscriberQueueState {
 /// Why a subscription stops being fed, which decides how its exchange ends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Closing {
-    /// The subscriber fell further behind than its queue holds: the exchange
-    /// ends `Faulted.Lagged`, and the subscriber opens Subscribe again.
+    /// The subscriber fell further behind than its queue holds: the
+    /// connection closes, and the subscriber connects and subscribes again.
     Lagged,
     /// The authority the subscription was opened under is gone: its peer was
     /// rebound or removed, or its connection's writing failed. The
@@ -1201,7 +1190,7 @@ impl Dispatcher {
         std::thread::spawn(move || loop {
             match writer_queue.next() {
                 QueueNext::Closed(closing) => {
-                    writer_connection.conclude(exchange, closing, writer_configuration.snapshot());
+                    writer_connection.conclude(exchange, closing);
                     return;
                 }
                 QueueNext::Response(response) => {
@@ -3420,34 +3409,25 @@ mod tests {
     }
 
     #[test]
-    fn a_lagged_subscription_ends_its_exchange_and_a_withdrawn_one_its_connection() {
-        use signal::{Delivery, Ending, ExchangeFault, ExchangeTracking, Greeted};
-        let (server, client) = std::os::unix::net::UnixStream::pair().expect("pair");
-        let connection = PublicConnection::new(server, PublicAuthority::Translator).expect("connection");
-        let lagged = signal::FIRST_EXCHANGE;
-        let withdrawn = signal::ExchangeId(2);
-        {
-            let mut ledger = connection.ledger.lock().expect("ledger");
-            ledger.greet().expect("greeted");
-            ledger.admit(lagged).expect("lagged admitted");
-            ledger.admit(withdrawn).expect("withdrawn admitted");
+    fn a_lagged_or_withdrawn_subscription_closes_its_connection() {
+        use signal::{ExchangeTracking, Greeted};
+        for closing in [Closing::Lagged, Closing::Withdrawn] {
+            let (server, client) = std::os::unix::net::UnixStream::pair().expect("pair");
+            let connection = PublicConnection::new(server, PublicAuthority::Translator).expect("connection");
+            let exchange = signal::FIRST_EXCHANGE;
+            {
+                let mut ledger = connection.ledger.lock().expect("ledger");
+                ledger.greet().expect("greeted");
+                ledger.admit(exchange).expect("exchange admitted");
+            }
+            connection.conclude(exchange, closing);
+            let capacity = signal::FrameCapacity::from(4096);
+            let mut reading = client.try_clone().expect("reading");
+            reading.set_read_timeout(Some(Duration::from_millis(500))).expect("timeout");
+            assert!(capsule_nexus_wire::exchange::read_frame_or_end(&mut reading, capacity)
+                .expect("the end of the connection")
+                .is_none());
         }
-        connection.conclude(lagged, Closing::Lagged, Some(test_configuration()));
-        let capacity = signal::FrameCapacity::from(4096);
-        let mut reading = client.try_clone().expect("reading");
-        reading.set_read_timeout(Some(Duration::from_millis(500))).expect("timeout");
-        let body = capsule_nexus_wire::exchange::read_frame_or_end(&mut reading, capacity)
-            .expect("frame")
-            .expect("an ending");
-        assert_eq!(
-            capsule_nexus_wire::exchange::restored::<Delivery<capsule_nexus_wire::public_call::Output>>(body)
-                .expect("delivery"),
-            Delivery::End(Ending::faulted(lagged, ExchangeFault::Lagged))
-        );
-        connection.conclude(withdrawn, Closing::Withdrawn, Some(test_configuration()));
-        assert!(capsule_nexus_wire::exchange::read_frame_or_end(&mut reading, capacity)
-            .expect("the end of the connection")
-            .is_none());
     }
 
     #[test]
