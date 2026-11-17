@@ -1,6 +1,6 @@
 [package]
 name = "capsule-nexus-core"
-version = "0.4.0"
+version = "0.5.0"
 edition.workspace = true
 rust-version.workspace = true
 publish = false
@@ -18,9 +18,16 @@ datom = [
 datom-codec = { git = "https://github.com/LiGoldragon/datom-codec", rev = "09a0526", optional = true }
 protos = { git = "https://github.com/LiGoldragon/protos", rev = "c93b598", optional = true }
 signal-capsule-nexus.workspace = true
+signal.workspace = true
+nexus.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 translator.workspace = true
 emission-capsule-nexus = { path = "../emission" }
 rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
+
+[dev-dependencies]
+futures-util = { workspace = true }
+tokio = { workspace = true, features = ["sync", "rt", "macros"] }
 
 [lints.rust]
 unsafe_code = "forbid"

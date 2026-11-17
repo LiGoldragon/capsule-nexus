@@ -257,7 +257,7 @@ rec {
       };
       "capsule-nexus-core" = rec {
         crateName = "capsule-nexus-core";
-        version = "0.4.0";
+        version = "0.5.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/core; };
         libName = "capsule_nexus_core";
@@ -272,6 +272,11 @@ rec {
             packageId = "emission-capsule-nexus";
           }
           {
+            name = "nexus";
+            packageId = "nexus";
+            usesDefaultFeatures = false;
+          }
+          {
             name = "protos";
             packageId = "protos";
             optional = true;
@@ -283,14 +288,38 @@ rec {
             features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
           }
           {
+            name = "signal";
+            packageId = "signal";
+            usesDefaultFeatures = false;
+          }
+          {
             name = "signal-capsule-nexus";
             packageId = "signal-capsule-nexus";
             usesDefaultFeatures = false;
           }
           {
+            name = "tokio";
+            packageId = "tokio";
+            usesDefaultFeatures = false;
+            features = [ "sync" ];
+          }
+          {
             name = "translator";
             packageId = "translator";
             usesDefaultFeatures = false;
+          }
+        ];
+        devDependencies = [
+          {
+            name = "futures-util";
+            packageId = "futures-util";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            usesDefaultFeatures = false;
+            features = [ "sync" "rt" "macros" ];
           }
         ];
         features = {
@@ -300,7 +329,7 @@ rec {
       };
       "capsule-nexus-daemon" = rec {
         crateName = "capsule-nexus-daemon";
-        version = "0.4.0";
+        version = "0.5.0";
         edition = "2021";
         crateBin = [
           {
@@ -329,8 +358,22 @@ rec {
             packageId = "emission-capsule-nexus";
           }
           {
+            name = "futures-util";
+            packageId = "futures-util";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "kameo";
+            packageId = "kameo";
+          }
+          {
             name = "meta-signal-capsule-nexus";
             packageId = "meta-signal-capsule-nexus";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "nexus";
+            packageId = "nexus";
             usesDefaultFeatures = false;
           }
           {
@@ -354,6 +397,12 @@ rec {
             usesDefaultFeatures = false;
           }
           {
+            name = "tokio";
+            packageId = "tokio";
+            usesDefaultFeatures = false;
+            features = [ "rt-multi-thread" "net" "io-util" "time" "sync" "macros" ];
+          }
+          {
             name = "translator";
             packageId = "translator";
             rename = "shared-translator";
@@ -365,7 +414,7 @@ rec {
       };
       "capsule-nexus-translator" = rec {
         crateName = "capsule-nexus-translator";
-        version = "0.4.0";
+        version = "0.5.0";
         edition = "2021";
         crateBin = [
           {
@@ -475,7 +524,7 @@ rec {
       };
       "capsule-nexus-wire" = rec {
         crateName = "capsule-nexus-wire";
-        version = "0.4.0";
+        version = "0.5.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/wire; };
         libName = "capsule_nexus_wire";
@@ -533,7 +582,7 @@ rec {
             name = "tokio";
             packageId = "tokio";
             usesDefaultFeatures = false;
-            features = [ "macros" "io-util" "net" "signal" "tracing" ];
+            features = [ "macros" "io-util" "net" "signal" "time" "tracing" ];
           }
           {
             name = "translator";
@@ -679,6 +728,28 @@ rec {
         ];
 
       };
+      "downcast-rs" = rec {
+        crateName = "downcast-rs";
+        version = "2.0.2";
+        edition = "2021";
+        sha256 = "1g0crs9qgz0sd9cwdgmm0zvjin2v549v46xfnc859rk903v40whi";
+        libName = "downcast_rs";
+        features = {
+          "default" = [ "std" "sync" ];
+        };
+        resolvedDefaultFeatures = [ "default" "std" "sync" ];
+      };
+      "dyn-clone" = rec {
+        crateName = "dyn-clone";
+        version = "1.0.20";
+        edition = "2018";
+        sha256 = "0m956cxcg8v2n8kmz6xs5zl13k2fak3zkapzfzzp7pxih6hix26h";
+        libName = "dyn_clone";
+        authors = [
+          "David Tolnay <dtolnay@gmail.com>"
+        ];
+
+      };
       "emission-capsule-nexus" = rec {
         crateName = "emission-capsule-nexus";
         version = "0.4.0";
@@ -766,7 +837,7 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "std" ];
       };
-      "ethos-zero" = rec {
+      "ethos-zero 22.0.0" = rec {
         crateName = "ethos-zero";
         version = "22.0.0";
         edition = "2024";
@@ -818,6 +889,148 @@ rec {
         };
         resolvedDefaultFeatures = [ "datom" "default" ];
       };
+      "ethos-zero 30.0.0" = rec {
+        crateName = "ethos-zero";
+        version = "30.0.0";
+        edition = "2024";
+        crateBin = [];
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/LiGoldragon/ethos-zero";
+          rev = "b97d9526909a1ecebf61339f5723eaca53de5dca";
+          sha256 = "0ixkiwrwiyahwnljc9cd2464l2i5a7jknac6hfdig78chjmpcpmc";
+        };
+        libName = "ethos_zero";
+        dependencies = [
+          {
+            name = "datom-codec";
+            packageId = "datom-codec";
+            features = [ "rkyv" ];
+          }
+          {
+            name = "prettyplease";
+            packageId = "prettyplease";
+          }
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+          }
+          {
+            name = "protos";
+            packageId = "protos";
+            features = [ "rkyv" ];
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            usesDefaultFeatures = false;
+            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+          {
+            name = "syn";
+            packageId = "syn 3.0.5";
+            features = [ "full" ];
+          }
+        ];
+        features = {
+          "default" = [ "datom" ];
+        };
+        resolvedDefaultFeatures = [ "datom" "default" ];
+      };
+      "futures" = rec {
+        crateName = "futures";
+        version = "0.3.34";
+        edition = "2018";
+        sha256 = "18yhwmbdalhz2z9i1vm10hy2v0cfm82dkgcb6vr2msxazfix4ccs";
+        dependencies = [
+          {
+            name = "futures-channel";
+            packageId = "futures-channel";
+            usesDefaultFeatures = false;
+            features = [ "sink" ];
+          }
+          {
+            name = "futures-core";
+            packageId = "futures-core";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "futures-executor";
+            packageId = "futures-executor";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "futures-io";
+            packageId = "futures-io";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "futures-sink";
+            packageId = "futures-sink";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "futures-task";
+            packageId = "futures-task";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "futures-util";
+            packageId = "futures-util";
+            usesDefaultFeatures = false;
+            features = [ "sink" ];
+          }
+        ];
+        features = {
+          "alloc" = [ "futures-core/alloc" "futures-task/alloc" "futures-sink/alloc" "futures-channel/alloc" "futures-util/alloc" ];
+          "async-await" = [ "futures-util/async-await" "futures-util/async-await-macro" ];
+          "bilock" = [ "futures-util/bilock" ];
+          "compat" = [ "std" "futures-util/compat" ];
+          "default" = [ "std" "async-await" "executor" ];
+          "executor" = [ "std" "futures-executor/std" ];
+          "futures-executor" = [ "dep:futures-executor" ];
+          "io-compat" = [ "compat" "futures-util/io-compat" ];
+          "spin" = [ "futures-util/spin" ];
+          "std" = [ "alloc" "futures-core/std" "futures-task/std" "futures-io/std" "futures-sink/std" "futures-util/std" "futures-util/io" "futures-util/channel" ];
+          "thread-pool" = [ "executor" "futures-executor/thread-pool" ];
+          "unstable" = [ "futures-core/unstable" "futures-task/unstable" "futures-channel/unstable" "futures-io/unstable" "futures-util/unstable" ];
+          "write-all-vectored" = [ "futures-util/write-all-vectored" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "async-await" "default" "executor" "futures-executor" "std" ];
+      };
+      "futures-channel" = rec {
+        crateName = "futures-channel";
+        version = "0.3.34";
+        edition = "2018";
+        sha256 = "1i4kwcanpaphn1ax62ci3nx176kglxqx0gnhzqpqdr1rkpbf7ydi";
+        libName = "futures_channel";
+        dependencies = [
+          {
+            name = "futures-core";
+            packageId = "futures-core";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "futures-sink";
+            packageId = "futures-sink";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "alloc" = [ "futures-core/alloc" ];
+          "default" = [ "std" ];
+          "futures-sink" = [ "dep:futures-sink" ];
+          "sink" = [ "futures-sink" ];
+          "std" = [ "alloc" "futures-core/std" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "futures-sink" "sink" "std" ];
+      };
       "futures-core" = rec {
         crateName = "futures-core";
         version = "0.3.34";
@@ -827,6 +1040,83 @@ rec {
         features = {
           "default" = [ "std" ];
           "portable-atomic" = [ "dep:portable-atomic" ];
+          "std" = [ "alloc" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "std" ];
+      };
+      "futures-executor" = rec {
+        crateName = "futures-executor";
+        version = "0.3.34";
+        edition = "2018";
+        sha256 = "0cjl3y7jgg60wwb96ikxj23r6q91ylvx8v675yychv1w3b7lf6q3";
+        libName = "futures_executor";
+        dependencies = [
+          {
+            name = "futures-core";
+            packageId = "futures-core";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "futures-task";
+            packageId = "futures-task";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "futures-util";
+            packageId = "futures-util";
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "default" = [ "std" ];
+          "std" = [ "futures-core/std" "futures-task/std" "futures-util/std" ];
+          "thread-pool" = [ "std" ];
+        };
+        resolvedDefaultFeatures = [ "std" ];
+      };
+      "futures-io" = rec {
+        crateName = "futures-io";
+        version = "0.3.34";
+        edition = "2018";
+        sha256 = "1v9z6wj92ra18kpv0xig21hgpzrvcwmcr8fszyzh64yyay0zmh2k";
+        libName = "futures_io";
+        features = {
+          "default" = [ "std" ];
+        };
+        resolvedDefaultFeatures = [ "std" ];
+      };
+      "futures-macro" = rec {
+        crateName = "futures-macro";
+        version = "0.3.34";
+        edition = "2018";
+        sha256 = "0i0czvcvsqq4hrccibq2f23004si5z34zjwdxfmqhlrmm15nbfcz";
+        procMacro = true;
+        libName = "futures_macro";
+        dependencies = [
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+          }
+          {
+            name = "syn";
+            packageId = "syn 3.0.5";
+            features = [ "full" ];
+          }
+        ];
+
+      };
+      "futures-sink" = rec {
+        crateName = "futures-sink";
+        version = "0.3.34";
+        edition = "2018";
+        sha256 = "07cfvrgc3vxk6sw5g8a8dnrm1mzg6d5mwy08ywa1sgyhyxml4i0r";
+        libName = "futures_sink";
+        features = {
+          "default" = [ "std" ];
           "std" = [ "alloc" ];
         };
         resolvedDefaultFeatures = [ "alloc" "std" ];
@@ -851,14 +1141,45 @@ rec {
         libName = "futures_util";
         dependencies = [
           {
+            name = "futures-channel";
+            packageId = "futures-channel";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+          {
             name = "futures-core";
             packageId = "futures-core";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "futures-io";
+            packageId = "futures-io";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+          {
+            name = "futures-macro";
+            packageId = "futures-macro";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "futures-sink";
+            packageId = "futures-sink";
+            optional = true;
             usesDefaultFeatures = false;
           }
           {
             name = "futures-task";
             packageId = "futures-task";
             usesDefaultFeatures = false;
+          }
+          {
+            name = "memchr";
+            packageId = "memchr";
+            optional = true;
           }
           {
             name = "pin-project-lite";
@@ -898,7 +1219,7 @@ rec {
           "unstable" = [ "futures-core/unstable" "futures-task/unstable" ];
           "write-all-vectored" = [ "io" ];
         };
-        resolvedDefaultFeatures = [ "alloc" "slab" "std" ];
+        resolvedDefaultFeatures = [ "alloc" "async-await" "async-await-macro" "channel" "futures-channel" "futures-io" "futures-macro" "futures-sink" "io" "memchr" "sink" "slab" "std" ];
       };
       "hashbrown" = rec {
         crateName = "hashbrown";
@@ -917,6 +1238,13 @@ rec {
           "rustc-dep-of-std" = [ "nightly" "core" "alloc" "rustc-internal-api" ];
           "serde" = [ "dep:serde_core" "dep:serde" ];
         };
+      };
+      "heck" = rec {
+        crateName = "heck";
+        version = "0.5.0";
+        edition = "2021";
+        sha256 = "1sjmpsdl8czyh9ywl3qcsfsq9a307dg4ni2vnlwgnzzqhc4y0113";
+
       };
       "indexmap" = rec {
         crateName = "indexmap";
@@ -991,6 +1319,91 @@ rec {
         };
         resolvedDefaultFeatures = [ "std" ];
       };
+      "kameo" = rec {
+        crateName = "kameo";
+        version = "0.22.2";
+        edition = "2024";
+        sha256 = "0am83imjgji4s4g4agk3x58b26z2m4b69vs35y0r016k7qrbgfkw";
+        dependencies = [
+          {
+            name = "downcast-rs";
+            packageId = "downcast-rs";
+          }
+          {
+            name = "dyn-clone";
+            packageId = "dyn-clone";
+          }
+          {
+            name = "futures";
+            packageId = "futures";
+          }
+          {
+            name = "kameo_macros";
+            packageId = "kameo_macros";
+            optional = true;
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "macros" "rt" "sync" "time" ];
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+            optional = true;
+          }
+        ];
+        devDependencies = [
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "macros" "rt" "rt-multi-thread" "signal" "sync" "time" ];
+          }
+        ];
+        features = {
+          "console" = [ "dep:rmp-serde" "tokio/net" "tokio/io-util" ];
+          "default" = [ "macros" "tracing" ];
+          "hotpath" = [ "dep:hotpath" "hotpath/hotpath" ];
+          "macros" = [ "dep:kameo_macros" ];
+          "metrics" = [ "dep:metrics" ];
+          "otel" = [ "dep:opentelemetry" "dep:tracing-opentelemetry" ];
+          "remote" = [ "dep:const-fnv1a-hash" "dep:const-str" "dep:either" "dep:libp2p" "dep:linkme" "dep:rmp-serde" ];
+          "tracing" = [ "dep:tracing" "tokio/tracing" ];
+        };
+        resolvedDefaultFeatures = [ "default" "macros" "tracing" ];
+      };
+      "kameo_macros" = rec {
+        crateName = "kameo_macros";
+        version = "0.21.1";
+        edition = "2024";
+        sha256 = "0miq3vvrbd0vq57x1vplqgbwb1frvbxs1bzvx3l6xf3fjxan0mpp";
+        procMacro = true;
+        dependencies = [
+          {
+            name = "heck";
+            packageId = "heck";
+          }
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+          }
+          {
+            name = "syn";
+            packageId = "syn 2.0.119";
+            features = [ "extra-traits" "full" ];
+          }
+        ];
+
+      };
       "libc" = rec {
         crateName = "libc";
         version = "0.2.189";
@@ -1061,7 +1474,7 @@ rec {
           "std" = [ "alloc" ];
           "use_std" = [ "std" ];
         };
-        resolvedDefaultFeatures = [ "alloc" "std" ];
+        resolvedDefaultFeatures = [ "alloc" "default" "std" ];
       };
       "memoffset" = rec {
         crateName = "memoffset";
@@ -1211,6 +1624,61 @@ rec {
           }
         ];
 
+      };
+      "nexus" = rec {
+        crateName = "nexus";
+        version = "0.8.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/LiGoldragon/nexus";
+          rev = "4765dd629126d31db8e13bdd338b55682fef2011";
+          sha256 = "1if2kc9ybzxwjjh2klbd3dnw1dl7wycwqds96qfm1c6qnn2gddx8";
+        };
+        dependencies = [
+          {
+            name = "futures-util";
+            packageId = "futures-util";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            usesDefaultFeatures = false;
+            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+          {
+            name = "signal";
+            packageId = "signal";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            usesDefaultFeatures = false;
+            features = [ "sync" ];
+          }
+        ];
+        buildDependencies = [
+          {
+            name = "ethos-zero";
+            packageId = "ethos-zero 30.0.0";
+          }
+        ];
+        devDependencies = [
+          {
+            name = "tokio";
+            packageId = "tokio";
+            usesDefaultFeatures = false;
+            features = [ "sync" "rt" "macros" ];
+          }
+        ];
+        features = {
+          "datom" = [ "dep:datom-codec" "dep:protos" ];
+        };
       };
       "nix" = rec {
         crateName = "nix";
@@ -1927,7 +2395,7 @@ rec {
         buildDependencies = [
           {
             name = "ethos-zero";
-            packageId = "ethos-zero";
+            packageId = "ethos-zero 22.0.0";
           }
         ];
         features = {
@@ -1937,13 +2405,13 @@ rec {
       };
       "signal-capsule-nexus" = rec {
         crateName = "signal-capsule-nexus";
-        version = "1.0.1";
+        version = "2.0.0";
         edition = "2021";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/signal-capsule-nexus";
-          rev = "d57c6f1d7cdd16f1d81349352c60dda86be337a2";
-          sha256 = "1ji3mll3l676jjp8drsgqsz536zg0hr93al844xivryqghc22xbn";
+          rev = "49b4ab138e006e9ee0dc06f7c9850bd003a6b138";
+          sha256 = "1q1f7y0h08szd8fa74nlv2gn8arc7zzkwd31jy2vv9c3436fp7n8";
         };
         libName = "signal_capsule_nexus";
         dependencies = [
@@ -2079,7 +2547,7 @@ rec {
           "proc-macro" = [ "proc-macro2/proc-macro" "quote?/proc-macro" ];
           "test" = [ "syn-test-suite/all-features" ];
         };
-        resolvedDefaultFeatures = [ "clone-impls" "default" "derive" "full" "parsing" "printing" "proc-macro" ];
+        resolvedDefaultFeatures = [ "clone-impls" "default" "derive" "extra-traits" "full" "parsing" "printing" "proc-macro" "visit-mut" ];
       };
       "syn 3.0.5" = rec {
         crateName = "syn";
@@ -2323,7 +2791,7 @@ rec {
           "tracing" = [ "dep:tracing" ];
           "windows-sys" = [ "dep:windows-sys" ];
         };
-        resolvedDefaultFeatures = [ "bytes" "io-util" "libc" "macros" "mio" "net" "signal" "signal-hook-registry" "socket2" "tokio-macros" "tracing" "windows-sys" ];
+        resolvedDefaultFeatures = [ "bytes" "default" "io-util" "libc" "macros" "mio" "net" "rt" "rt-multi-thread" "signal" "signal-hook-registry" "socket2" "sync" "time" "tokio-macros" "tracing" "windows-sys" ];
       };
       "tokio-macros" = rec {
         crateName = "tokio-macros";
@@ -2367,6 +2835,11 @@ rec {
             packageId = "pin-project-lite";
           }
           {
+            name = "tracing-attributes";
+            packageId = "tracing-attributes";
+            optional = true;
+          }
+          {
             name = "tracing-core";
             packageId = "tracing-core";
             usesDefaultFeatures = false;
@@ -2381,7 +2854,38 @@ rec {
           "tracing-attributes" = [ "dep:tracing-attributes" ];
           "valuable" = [ "tracing-core/valuable" ];
         };
-        resolvedDefaultFeatures = [ "std" ];
+        resolvedDefaultFeatures = [ "attributes" "default" "std" "tracing-attributes" ];
+      };
+      "tracing-attributes" = rec {
+        crateName = "tracing-attributes";
+        version = "0.1.31";
+        edition = "2018";
+        sha256 = "1np8d77shfvz0n7camx2bsf1qw0zg331lra0hxb4cdwnxjjwz43l";
+        procMacro = true;
+        libName = "tracing_attributes";
+        authors = [
+          "Tokio Contributors <team@tokio.rs>"
+          "Eliza Weisman <eliza@buoyant.io>"
+          "David Barsky <dbarsky@amazon.com>"
+        ];
+        dependencies = [
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+          }
+          {
+            name = "syn";
+            packageId = "syn 2.0.119";
+            usesDefaultFeatures = false;
+            features = [ "full" "parsing" "printing" "visit-mut" "clone-impls" "extra-traits" "proc-macro" ];
+          }
+        ];
+        features = {
+        };
       };
       "tracing-core" = rec {
         crateName = "tracing-core";

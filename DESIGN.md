@@ -63,7 +63,8 @@ separate. Internal failures never receive invented exit codes.
 The Nexus and translator each own a partial configuration. One flat typed
 `Set` validates and applies one field; refusal preserves the previous partial
 snapshot. The Nexus owns start, polling, frame-capacity, transport and
-subscriber-queue limits.
+subscriber-capacity limits; the subscriber capacity is the capacity a session's
+Publisher is made with.
 The translator owns the herdr path, call timeout, output limit and text budget.
 Each process reports the fields it still awaits and becomes ready only when
 all of its fields are present and their cross-field constraints hold. Defaults
@@ -99,16 +100,31 @@ Caller: `public_call::Input` or `meta_call::Input`, the envelope and the
 identity as they were. Every frame the Nexus sends names its exchange.
 
 A one-answer input is answered by one `Delivery::Answer` on its exchange, and
-the exchange ends with it. A Subscribe is an exchange that goes on answering:
-its acknowledgement first, the current state of each owned pane after it, then
-one Answer per change. A subscriber that falls further behind than its queue
-holds has its exchange ended `Faulted.Lagged`, and opens Subscribe again; a
-subscription withdrawn with its peer's binding closes its connection; the
-querying side unsubscribes by abandoning the exchange or closing the
-connection.
+the exchange ends with it. A Subscribe is an exchange that goes on answering,
+one Answer per frame of its stream, `Subscribed.Stream<Panes Changed>`:
+`Opened` first, with the panes the Capsule holds in the session that are not
+Dead, whoever owns them; then each `Changed`; and `Lagged` with the panes anew
+for a subscriber that fell more than the subscriber capacity behind, which goes
+on from them. A refused Subscribe is answered once, `SubscribeRefused`.
+Observing is open; acting stays the owner's. A subscription withdrawn with its
+peer's binding closes its connection; the querying side unsubscribes by
+abandoning the exchange or closing the connection.
 
-The public socket answers each exchange on a thread of its own, so several
-calls and subscriptions share one connection; the authority is the
+The Capsule's state is owned by one Kameo actor on the daemon's tokio runtime:
+Memory, ownership, reservations and revisions, and for each session that has a
+subscriber one `nexus::Publisher` over its panes, which holds the published
+state once. Each step an attempt makes on that state is one message; herdr calls
+run between the steps on the runtime's blocking pool. The operation that
+changes Memory publishes the change when Memory answers `Succeeded` and the
+pane's state moved, so a pane is told Dead once and leaves the state. The
+Publisher is made at a session's first Subscribe and dropped with its last
+stream. While it lives, the session's feed observes the session with List's
+herdr calls once per polling interval and reconciles what it sees into Memory,
+whose changes are published; the feed ends when the Publisher is dropped.
+
+The public socket answers each exchange on a task of its own, so several
+calls and subscriptions share one connection; a subscription's task is woken by
+its stream's next frame or by its closing, never by a timer; the authority is the
 connection's, taken from its peer credentials at accept, and each Call's Caller
 is checked against it. The greeting must arrive within the transport timeout;
 after it a connection may be quiet. The meta socket serves one connection at a

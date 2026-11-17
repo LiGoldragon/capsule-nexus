@@ -327,25 +327,29 @@ where
 /// One accepted public connection: one greeting, then any number of
 /// exchanges, each opened with a Call carrying its Caller.
 ///
-/// The authority is the connection's, taken from its peer credentials at
-/// accept. Each exchange is answered on a thread of its own, so a slow
+/// The connection is served on the runtime. The authority is the
+/// connection's, taken from its peer credentials at accept. Each exchange is
+/// answered by a task of its own, its attempt on the blocking pool, so a slow
 /// external attempt holds no other exchange back; a Subscribe goes on
-/// answering on its exchange from its subscription's writer. Every frame is
-/// written whole, one at a time, within the configured transport timeout.
+/// answering on its exchange from its stream's task, woken by the next frame
+/// or by its end. Every frame is written whole, one at a time, within the
+/// configured transport timeout.
 pub struct PublicConnection {
-    stream: std::os::unix::net::UnixStream,
-    writing: std::sync::Mutex<std::os::unix::net::UnixStream>,
+    writing: tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>,
     ledger: std::sync::Mutex<signal::ExchangeLedger>,
     /// The subscriptions open on this connection, or `None` once the
     /// connection has ended.
     subscriptions: std::sync::Mutex<Option<Vec<CarriedSubscription>>>,
+    /// Set once the connection ends, which wakes its reading.
+    ended: tokio::sync::watch::Sender<bool>,
     authority: PublicAuthority,
+    caller: shared_translator::Caller,
 }
 
 /// A subscription open on an exchange of a connection.
 struct CarriedSubscription {
     exchange: signal::ExchangeId,
-    queue: Arc<SubscriberQueue>,
+    closing: Arc<SubscriptionClosing>,
 }
 
 /// Whether a connection goes on after the frame it just handled.
@@ -355,84 +359,103 @@ enum Continuation {
 }
 
 impl PublicConnection {
-    pub fn new(
+    /// Serves an accepted connection until the peer closes it or breaks the
+    /// protocol. The greeting must arrive within the transport timeout; after
+    /// it the connection may be quiet for as long as the peer likes.
+    pub async fn serve(
         stream: std::os::unix::net::UnixStream,
         authority: PublicAuthority,
-    ) -> std::io::Result<Arc<Self>> {
-        Ok(Arc::new(Self {
-            writing: std::sync::Mutex::new(stream.try_clone()?),
-            stream,
+        dispatcher: Dispatcher,
+        configuration: Arc<ReadyCoreConfiguration>,
+    ) {
+        let caller = match capsule_nexus_wire::frame::peer_caller(&stream) {
+            Ok(caller) => caller,
+            Err(error) => {
+                eprintln!("Capsule Nexus public peer lookup failed: {error}");
+                return;
+            }
+        };
+        let stream = match stream
+            .set_nonblocking(true)
+            .and_then(|()| tokio::net::UnixStream::from_std(stream))
+        {
+            Ok(stream) => stream,
+            Err(error) => {
+                eprintln!("Capsule Nexus public connection failed: {error}");
+                return;
+            }
+        };
+        let (mut reading, writing) = stream.into_split();
+        let connection = Arc::new(Self {
+            writing: tokio::sync::Mutex::new(writing),
             ledger: std::sync::Mutex::new(signal::ExchangeLedger::default()),
             subscriptions: std::sync::Mutex::new(Some(Vec::new())),
+            ended: tokio::sync::watch::Sender::new(false),
             authority,
-        }))
-    }
-
-    /// Serves the connection until the peer closes it or breaks the protocol.
-    /// The greeting must arrive within the transport timeout; after it the
-    /// connection may be quiet for as long as the peer likes.
-    pub fn serve(self: &Arc<Self>, dispatcher: &Arc<Dispatcher>, configuration: &ReadyCoreConfiguration) {
-        if let Continuation::Going = self.greeted(configuration) {
-            self.listen(dispatcher);
+            caller,
+        });
+        if let Continuation::Going = connection.greeted(&mut reading, &configuration).await {
+            connection.listen(&mut reading, &dispatcher).await;
         }
-        self.end();
+        connection.end().await;
     }
 
-    fn greeted(&self, configuration: &ReadyCoreConfiguration) -> Continuation {
-        use capsule_nexus_wire::exchange::{read_frame_or_end, restored};
+    async fn greeted(
+        &self,
+        reading: &mut tokio::net::unix::OwnedReadHalf,
+        configuration: &ReadyCoreConfiguration,
+    ) -> Continuation {
+        use capsule_nexus_wire::exchange::{read_frame_within_async, restored};
         use signal::{Contracted, Delivery, Dispatch, Ending, ExchangeFault, Greeted, HandshakeReceipt};
         let capacity = signal::FrameCapacity::from(configuration.frame_capacity_bytes);
-        let first = DeadlineStream::new(
-            match self.stream.try_clone() {
-                Ok(stream) => stream,
-                Err(_) => return Continuation::Ended,
-            },
-            configuration.transport_timeout,
-        )
-        .ok()
-        .and_then(|mut input| read_frame_or_end(&mut input, capacity).ok().flatten());
-        let Some(body) = first else {
+        let Ok(Some(body)) = read_frame_within_async(reading, configuration.transport_timeout, capacity).await else {
             return Continuation::Ended;
         };
         match restored::<Dispatch<capsule_nexus_wire::public_call::Input>>(body) {
             Ok(Dispatch::Greet(greeting)) => {
                 let receipt = capsule_nexus_wire::public_call::Input::receipt(&greeting);
                 let settled = matches!(receipt, HandshakeReceipt::Greeted(_));
-                if self.deliver(Delivery::Greeted(receipt), configuration).is_err() || !settled {
+                if self.deliver(Delivery::Greeted(receipt), configuration).await.is_err() || !settled {
                     return Continuation::Ended;
                 }
                 let _ = self.ledger.lock().unwrap_or_else(|p| p.into_inner()).greet();
                 Continuation::Going
             }
-            Ok(_) => self.faulted(Ending::connection_faulted(ExchangeFault::GreetingExpected), configuration),
-            Err(_) => self.faulted(Ending::connection_faulted(ExchangeFault::UnreadableQuery), configuration),
+            Ok(_) => self.faulted(Ending::connection_faulted(ExchangeFault::GreetingExpected), configuration).await,
+            Err(_) => self.faulted(Ending::connection_faulted(ExchangeFault::UnreadableQuery), configuration).await,
         }
     }
 
     /// Reads the greeted connection's frames until it ends.
-    fn listen(self: &Arc<Self>, dispatcher: &Arc<Dispatcher>) {
-        use capsule_nexus_wire::exchange::{read_frame_after_idle, restored};
+    async fn listen(self: &Arc<Self>, reading: &mut tokio::net::unix::OwnedReadHalf, dispatcher: &Dispatcher) {
+        use capsule_nexus_wire::exchange::{read_frame_after_idle_async, restored};
         use signal::{Dispatch, Ending, ExchangeFault, FrameError};
+        let mut ended = self.ended.subscribe();
         loop {
             let Some(configuration) = dispatcher.configuration.snapshot() else {
                 return;
             };
             let capacity = signal::FrameCapacity::from(configuration.frame_capacity_bytes);
-            let body = match read_frame_after_idle(&self.stream, configuration.transport_timeout, capacity) {
+            let read = tokio::select! {
+                biased;
+                _ = ended.changed() => return,
+                read = read_frame_after_idle_async(reading, configuration.transport_timeout, capacity) => read,
+            };
+            let body = match read {
                 Ok(Some(body)) => body,
                 Ok(None) | Err(FrameError::Io(_)) => return,
                 Err(FrameError::BodyTooLarge { .. }) => {
-                    self.faulted(Ending::connection_faulted(ExchangeFault::UnreadableQuery), &configuration);
+                    self.faulted(Ending::connection_faulted(ExchangeFault::UnreadableQuery), &configuration).await;
                     return;
                 }
             };
             let continuation = match restored::<Dispatch<capsule_nexus_wire::public_call::Input>>(body) {
-                Err(_) => self.faulted(Ending::connection_faulted(ExchangeFault::UnreadableQuery), &configuration),
+                Err(_) => self.faulted(Ending::connection_faulted(ExchangeFault::UnreadableQuery), &configuration).await,
                 Ok(Dispatch::Greet(_)) => {
-                    self.faulted(Ending::connection_faulted(ExchangeFault::GreetingRepeated), &configuration)
+                    self.faulted(Ending::connection_faulted(ExchangeFault::GreetingRepeated), &configuration).await
                 }
-                Ok(Dispatch::Open(opening)) => self.opened(dispatcher, opening, configuration),
-                Ok(Dispatch::Abandon(exchange)) => self.abandoned(exchange, &configuration),
+                Ok(Dispatch::Open(opening)) => self.opened(dispatcher, opening, configuration).await,
+                Ok(Dispatch::Abandon(exchange)) => self.abandoned(exchange, &configuration).await,
             };
             if let Continuation::Ended = continuation {
                 return;
@@ -440,9 +463,9 @@ impl PublicConnection {
         }
     }
 
-    fn opened(
+    async fn opened(
         self: &Arc<Self>,
-        dispatcher: &Arc<Dispatcher>,
+        dispatcher: &Dispatcher,
         opening: signal::Opening<capsule_nexus_wire::public_call::Input>,
         configuration: Arc<ReadyCoreConfiguration>,
     ) -> Continuation {
@@ -452,9 +475,9 @@ impl PublicConnection {
         if let Err(fault) = admitted {
             let ending = Ending::faulted(exchange, fault);
             if ending.is_connection_wide() {
-                return self.faulted(ending, &configuration);
+                return self.faulted(ending, &configuration).await;
             }
-            return match self.deliver(signal::Delivery::End(ending), &configuration) {
+            return match self.deliver(signal::Delivery::End(ending), &configuration).await {
                 Ok(()) => Continuation::Going,
                 Err(_) => Continuation::Ended,
             };
@@ -463,62 +486,131 @@ impl PublicConnection {
         // The authority is the connection's: a configured peer's binding is
         // checked again for every exchange, and a Caller that is not the
         // connection's own peer ends the connection unanswered.
-        let Ok(actual) = capsule_nexus_wire::frame::peer_caller(&self.stream) else {
-            return Continuation::Ended;
-        };
         let peer_grant = self.authority.peer_grant();
         if let Some((peer_id, generation)) = &peer_grant {
-            if !dispatcher.peer_grant_is_current(&actual, peer_id, *generation) {
+            if !dispatcher.peer_grant_is_current(&self.caller, peer_id, *generation) {
                 eprintln!("Capsule Nexus public request failed: configured peer binding changed before request dispatch");
                 return Continuation::Ended;
             }
         }
-        let principal = match principal_for(&self.authority, &actual, &call.caller) {
+        let principal = match principal_for(&self.authority, &self.caller, &call.caller) {
             Ok(principal) => principal,
             Err(error) => {
                 eprintln!("Capsule Nexus public request failed: {error}");
                 return Continuation::Ended;
             }
         };
-        let connection = Arc::clone(self);
-        let dispatcher = Arc::clone(dispatcher);
-        std::thread::spawn(move || {
-            match dispatcher.dispatch_as(principal.clone(), call.public_input.0, Arc::clone(&configuration)) {
-                PublicDispatch::Answered(response) => connection.answer(exchange, response, &configuration),
-                PublicDispatch::Subscribe(session) => {
-                    if let Err(error) = dispatcher.subscribe_bound(
-                        &connection,
-                        exchange,
-                        principal,
-                        peer_grant,
-                        session,
-                        configuration,
-                    ) {
-                        eprintln!("Capsule Nexus subscription failed: {error}");
-                        connection.end();
-                    }
-                }
-            }
-        });
+        tokio::spawn(Arc::clone(self).exchanged(
+            dispatcher.clone(),
+            exchange,
+            principal,
+            peer_grant,
+            call.public_input.0,
+            configuration,
+        ));
         Continuation::Going
     }
 
-    fn abandoned(&self, exchange: signal::ExchangeId, configuration: &ReadyCoreConfiguration) -> Continuation {
+    /// Answers one exchange: its attempt runs on the blocking pool, and its
+    /// answer is given once or, for a Subscribe, as the stream's frames.
+    async fn exchanged(
+        self: Arc<Self>,
+        dispatcher: Dispatcher,
+        exchange: signal::ExchangeId,
+        principal: shared_translator::Principal,
+        peer_grant: Option<(shared_translator::PeerId, u64)>,
+        input: signal_capsule_nexus::Input,
+        configuration: Arc<ReadyCoreConfiguration>,
+    ) {
+        let answering = dispatcher.clone();
+        let attempted = Arc::clone(&configuration);
+        let attempting = principal.clone();
+        let answer = tokio::task::spawn_blocking(move || answering.dispatch_as(attempting, input, attempted)).await;
+        match answer {
+            Ok(signal_capsule_nexus::Answer::Once(response)) => self.answer(exchange, response, &configuration).await,
+            Ok(signal_capsule_nexus::Answer::Subscribed(stream)) => {
+                self.subscribed(&dispatcher, exchange, principal, peer_grant, stream).await
+            }
+            Err(error) => {
+                eprintln!("Capsule Nexus public attempt failed: {error}");
+                self.end().await;
+            }
+        }
+    }
+
+    /// Carries a subscription's stream on its exchange. A configured peer's
+    /// subscription is withdrawn with its binding.
+    async fn subscribed(
+        self: &Arc<Self>,
+        dispatcher: &Dispatcher,
+        exchange: signal::ExchangeId,
+        principal: shared_translator::Principal,
+        peer_grant: Option<(shared_translator::PeerId, u64)>,
+        stream: signal::Stream<signal_capsule_nexus::Panes, signal_capsule_nexus::Changed>,
+    ) {
+        let closing = Arc::new(SubscriptionClosing::default());
+        if let shared_translator::Principal::Peer(peer_id) = &principal {
+            let registered = peer_grant.is_some_and(|(granted_id, generation)| {
+                granted_id == *peer_id
+                    && dispatcher.configuration.register_peer_subscriber(peer_id, generation, &closing)
+            });
+            if !registered {
+                eprintln!("Capsule Nexus subscription failed: configured peer binding changed before subscription registration");
+                self.end().await;
+                return;
+            }
+        }
+        self.carry(exchange, &closing);
+        self.follow(dispatcher, exchange, stream, closing).await;
+    }
+
+    /// Sends each frame of the stream as one answer on its exchange, until
+    /// the stream finishes or the subscription closes.
+    async fn follow(
+        &self,
+        dispatcher: &Dispatcher,
+        exchange: signal::ExchangeId,
+        mut stream: signal::Stream<signal_capsule_nexus::Panes, signal_capsule_nexus::Changed>,
+        closing: Arc<SubscriptionClosing>,
+    ) {
+        use futures_util::StreamExt;
+        let concluded = loop {
+            let frame = tokio::select! {
+                biased;
+                closed = closing.closed() => break closed,
+                frame = stream.next() => frame,
+            };
+            let Some(frame) = frame else {
+                break Closing::Finished;
+            };
+            let Some(configuration) = dispatcher.configuration.snapshot() else {
+                break Closing::Withdrawn;
+            };
+            let response = signal_capsule_nexus::Output::Subscribed(frame);
+            if self.stream(exchange, response, &configuration).await.is_err() {
+                break Closing::Withdrawn;
+            }
+        };
+        drop(stream);
+        self.conclude(exchange, concluded, dispatcher).await;
+    }
+
+    async fn abandoned(&self, exchange: signal::ExchangeId, configuration: &ReadyCoreConfiguration) -> Continuation {
         use signal::{Ending, ExchangeTracking, Exchanged};
         let released = self.ledger.lock().unwrap_or_else(|p| p.into_inner()).release(exchange);
         match released {
             Ok(_) => {
-                if let Some(queue) = self.withdrawn(exchange) {
-                    queue.close(Closing::Abandoned);
+                if let Some(closing) = self.withdrawn(exchange) {
+                    closing.close(Closing::Abandoned);
                 }
                 Continuation::Going
             }
             Err(fault) => {
                 let ending = Ending::faulted(exchange, fault);
                 if ending.is_connection_wide() {
-                    return self.faulted(ending, configuration);
+                    return self.faulted(ending, configuration).await;
                 }
-                match self.deliver(signal::Delivery::End(ending), configuration) {
+                match self.deliver(signal::Delivery::End(ending), configuration).await {
                     Ok(()) => Continuation::Going,
                     Err(_) => Continuation::Ended,
                 }
@@ -528,7 +620,7 @@ impl PublicConnection {
 
     /// Answers a one-answer exchange, which ends with it. An exchange the peer
     /// abandoned meanwhile is not answered.
-    fn answer(
+    async fn answer(
         &self,
         exchange: signal::ExchangeId,
         response: signal_capsule_nexus::Output,
@@ -536,53 +628,64 @@ impl PublicConnection {
     ) {
         use signal::ExchangeTracking;
         let released = self.ledger.lock().unwrap_or_else(|p| p.into_inner()).release(exchange);
-        if released.is_ok() && self.deliver(Self::answered(exchange, response), configuration).is_err() {
-            self.end();
+        if released.is_ok() && self.deliver(Self::answered(exchange, response), configuration).await.is_err() {
+            self.end().await;
         }
     }
 
     /// Sends one more answer on a subscription's exchange.
-    fn stream(
+    async fn stream(
         &self,
         exchange: signal::ExchangeId,
         response: signal_capsule_nexus::Output,
         configuration: &ReadyCoreConfiguration,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), capsule_nexus_wire::exchange::ExchangeError> {
         use signal::ExchangeTracking;
-        if !self.ledger.lock().unwrap_or_else(|p| p.into_inner()).bears(exchange) {
+        let bears = self.ledger.lock().unwrap_or_else(|p| p.into_inner()).bears(exchange);
+        if !bears {
             return Ok(());
         }
-        self.deliver(Self::answered(exchange, response), configuration)
+        self.deliver(Self::answered(exchange, response), configuration).await
     }
 
-    /// Records a subscription's queue on its exchange. A connection that has
-    /// already ended abandons it at once.
-    fn carry(&self, exchange: signal::ExchangeId, queue: &Arc<SubscriberQueue>) {
+    /// Records a subscription on its exchange. A connection that has already
+    /// ended abandons it at once.
+    fn carry(&self, exchange: signal::ExchangeId, closing: &Arc<SubscriptionClosing>) {
         match self.subscriptions.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
             Some(subscriptions) => subscriptions.push(CarriedSubscription {
                 exchange,
-                queue: Arc::clone(queue),
+                closing: Arc::clone(closing),
             }),
-            None => queue.close(Closing::Abandoned),
+            None => closing.close(Closing::Abandoned),
         }
     }
 
-    fn withdrawn(&self, exchange: signal::ExchangeId) -> Option<Arc<SubscriberQueue>> {
+    fn withdrawn(&self, exchange: signal::ExchangeId) -> Option<Arc<SubscriptionClosing>> {
         let mut subscriptions = self.subscriptions.lock().unwrap_or_else(|p| p.into_inner());
         let subscriptions = subscriptions.as_mut()?;
         let at = subscriptions.iter().position(|carried| carried.exchange == exchange)?;
-        Some(subscriptions.remove(at).queue)
+        Some(subscriptions.remove(at).closing)
     }
 
-    /// Concludes a subscription as its queue's closing says: a subscriber
-    /// that fell behind or whose authority is gone has its connection closed.
-    fn conclude(&self, exchange: signal::ExchangeId, closing: Closing) {
+    /// Concludes a subscription as its closing says: a stream that finished
+    /// ends its exchange Completed, and a subscriber whose authority is gone
+    /// has its connection closed.
+    async fn conclude(&self, exchange: signal::ExchangeId, closing: Closing, dispatcher: &Dispatcher) {
         use signal::ExchangeTracking;
         self.withdrawn(exchange);
-        let _ = self.ledger.lock().unwrap_or_else(|p| p.into_inner()).release(exchange);
+        let released = self.ledger.lock().unwrap_or_else(|p| p.into_inner()).release(exchange);
         match closing {
             Closing::Abandoned => {}
-            Closing::Lagged | Closing::Withdrawn => self.end(),
+            Closing::Finished => {
+                let Some(configuration) = dispatcher.configuration.snapshot() else {
+                    return self.end().await;
+                };
+                let ending = signal::Delivery::End(signal::Ending::completed(exchange));
+                if released.is_ok() && self.deliver(ending, &configuration).await.is_err() {
+                    self.end().await;
+                }
+            }
+            Closing::Withdrawn => self.end().await,
         }
     }
 
@@ -599,34 +702,36 @@ impl PublicConnection {
     }
 
     /// Ends the connection with a fault it names.
-    fn faulted(&self, ending: signal::Ending, configuration: &ReadyCoreConfiguration) -> Continuation {
-        let _ = self.deliver(signal::Delivery::End(ending), configuration);
+    async fn faulted(&self, ending: signal::Ending, configuration: &ReadyCoreConfiguration) -> Continuation {
+        let _ = self.deliver(signal::Delivery::End(ending), configuration).await;
         Continuation::Ended
     }
 
-    fn deliver(
+    async fn deliver(
         &self,
         delivery: signal::Delivery<capsule_nexus_wire::public_call::Output>,
         configuration: &ReadyCoreConfiguration,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let writing = self.writing.lock().unwrap_or_else(|p| p.into_inner());
-        capsule_nexus_wire::exchange::write_value(
-            &writing,
+    ) -> Result<(), capsule_nexus_wire::exchange::ExchangeError> {
+        let mut writing = self.writing.lock().await;
+        capsule_nexus_wire::exchange::write_value_async(
+            &mut *writing,
             &delivery,
             configuration.transport_timeout,
             signal::FrameCapacity::from(configuration.frame_capacity_bytes),
-        )?;
-        Ok(())
+        )
+        .await
     }
 
-    /// Ends the connection: every subscription on it is abandoned and the peer
-    /// reads the end of the stream.
-    fn end(&self) {
+    /// Ends the connection: every subscription on it is abandoned, its
+    /// reading stops and the peer reads the end of the stream.
+    async fn end(&self) {
+        use tokio::io::AsyncWriteExt;
         let carried = self.subscriptions.lock().unwrap_or_else(|p| p.into_inner()).take();
         for carried in carried.into_iter().flatten() {
-            carried.queue.close(Closing::Abandoned);
+            carried.closing.close(Closing::Abandoned);
         }
-        let _ = self.stream.shutdown(std::net::Shutdown::Both);
+        self.ended.send_replace(true);
+        let _ = self.writing.lock().await.shutdown().await;
     }
 }
 
@@ -634,19 +739,69 @@ pub fn same_login(caller: &shared_translator::Caller) -> bool {
     caller.user_id.0 == i64::from(nix::unistd::getuid().as_raw())
 }
 
-pub struct Dispatcher {
-    state: std::sync::Mutex<DispatcherState>,
-    emitter: Arc<dyn ExternalEmitter>,
-    subscriptions: std::sync::Mutex<SubscriptionHub>,
-    next_subscription_generation: std::sync::atomic::AtomicU64,
-    configuration: Arc<ConfigurationStore>,
+/// Why a subscription stops being fed, which decides how its exchange ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Closing {
+    /// The stream finished: its Publisher is gone, and the exchange ends
+    /// Completed.
+    Finished,
+    /// The authority the subscription was opened under is gone: its peer was
+    /// rebound or removed, or its connection's writing failed. The
+    /// connection closes.
+    Withdrawn,
+    /// The querying side abandoned the exchange or closed the connection.
+    Abandoned,
 }
 
-/// The complete public operation decision: answer once or establish the
-/// dedicated subscription stream. Subscribe has no parallel one-shot path.
-pub enum PublicDispatch {
-    Answered(signal_capsule_nexus::Output),
-    Subscribe(signal_capsule_nexus::Session),
+/// The closing of one subscription, set once, by whoever ends it first, and
+/// awaited by the task that follows its stream.
+#[derive(Default)]
+struct SubscriptionClosing {
+    closing: tokio::sync::watch::Sender<Option<Closing>>,
+}
+
+impl SubscriptionClosing {
+    /// Closes the subscription for `closing`, unless it is already closed for
+    /// another reason, which stands.
+    fn close(&self, closing: Closing) {
+        self.closing.send_if_modified(|current| {
+            if current.is_some() {
+                return false;
+            }
+            *current = Some(closing);
+            true
+        });
+    }
+
+    #[cfg(test)]
+    fn is_open(&self) -> bool {
+        self.closing.borrow().is_none()
+    }
+
+    /// Waits until the subscription is closed, and says why.
+    async fn closed(&self) -> Closing {
+        let mut watching = self.closing.subscribe();
+        loop {
+            let current = *watching.borrow_and_update();
+            if let Some(closing) = current {
+                return closing;
+            }
+            if watching.changed().await.is_err() {
+                return Closing::Abandoned;
+            }
+        }
+    }
+}
+
+/// The public surface of the Nexus: each input attempted on the state its
+/// [`Capsule`] actor owns, every external effect emitted between the actor's
+/// steps, so no herdr call holds the state.
+#[derive(Clone)]
+pub struct Dispatcher {
+    capsule: kameo::actor::ActorRef<Capsule>,
+    emitter: Arc<dyn ExternalEmitter>,
+    configuration: Arc<ConfigurationStore>,
+    runtime: tokio::runtime::Handle,
 }
 
 pub trait ExternalEmitter: Send + Sync {
@@ -666,7 +821,12 @@ struct SocketEmitter {
     translator_socket: std::path::PathBuf,
 }
 
-struct DispatcherState {
+/// The Kameo actor that owns the Capsule's state: Memory and each session's
+/// Publisher in its Core, who owns each pane, the attempts in flight and each
+/// pane's revision. Every reading and change of that state is one of its
+/// messages, handled one at a time; the Publisher's state is held there once.
+#[derive(kameo::Actor)]
+pub struct Capsule {
     core: capsule_nexus_core::Core<capsule_nexus_core::InMemory>,
     principals: std::collections::HashMap<signal_capsule_nexus::Pane, shared_translator::Principal>,
     reserved: std::collections::HashMap<signal_capsule_nexus::Pane, u64>,
@@ -676,206 +836,411 @@ struct DispatcherState {
     next_creation_sequence: i64,
 }
 
-#[derive(Default)]
-struct SubscriptionHub {
-    sessions: std::collections::HashMap<(shared_translator::Principal, signal_capsule_nexus::Session), SessionSubscription>,
-}
+/// What a listing captures before it is emitted: each owned pane's revision,
+/// the creations pending in the session, and every principal that owns a pane
+/// or a pending creation there.
+type Captured = (
+    std::collections::HashMap<signal_capsule_nexus::Pane, u64>,
+    Vec<capsule_nexus_core::generated::memory::PendingCreation>,
+    Vec<shared_translator::Principal>,
+);
 
-struct SessionSubscription {
-    generation: u64,
-    subscribers: Vec<Subscriber>,
-}
+/// The listings a pending creation is adopted from: the panes, and the
+/// workspaces herdr holds.
+type Adoption = (
+    Vec<emission_capsule_nexus::PaneListing>,
+    Vec<emission_capsule_nexus::WorkspaceListing>,
+);
 
-struct Subscriber {
-    queue: Arc<SubscriberQueue>,
-    delivered: std::collections::HashMap<signal_capsule_nexus::Pane, signal_capsule_nexus::State>,
-}
-
-struct SubscriberQueue {
-    state: std::sync::Mutex<SubscriberQueueState>,
-    ready: std::sync::Condvar,
-}
-
-struct SubscriberQueueState {
-    pending: std::collections::VecDeque<signal_capsule_nexus::Output>,
-    capacity: usize,
-    closing: Option<Closing>,
-}
-
-/// Why a subscription stops being fed, which decides how its exchange ends.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Closing {
-    /// The subscriber fell further behind than its queue holds: the
-    /// connection closes, and the subscriber connects and subscribes again.
-    Lagged,
-    /// The authority the subscription was opened under is gone: its peer was
-    /// rebound or removed, or its connection's writing failed. The
-    /// connection closes.
-    Withdrawn,
-    /// The querying side abandoned the exchange or closed the connection.
-    Abandoned,
-}
-
-enum QueueNext {
-    Response(signal_capsule_nexus::Output),
-    Closed(Closing),
-}
-
-impl SubscriberQueue {
-    fn new(capacity: usize) -> Self {
+impl Capsule {
+    fn new(instance_id: signal_capsule_nexus::InstanceId) -> Self {
         Self {
-            state: std::sync::Mutex::new(SubscriberQueueState {
-                pending: std::collections::VecDeque::new(),
-                capacity,
-                closing: None,
-            }),
-            ready: std::sync::Condvar::new(),
+            core: capsule_nexus_core::Core::new(capsule_nexus_core::InMemory::default()),
+            principals: std::collections::HashMap::new(),
+            reserved: std::collections::HashMap::new(),
+            revisions: std::collections::HashMap::new(),
+            next_reservation: 1,
+            instance_id,
+            next_creation_sequence: 1,
         }
     }
 
-    fn enqueue(&self, response: signal_capsule_nexus::Output) -> bool {
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if state.closing.is_some() {
-            return false;
-        }
-        if state.pending.len() >= state.capacity {
-            state.closing = Some(Closing::Lagged);
-            state.pending.clear();
-            self.ready.notify_all();
-            return false;
-        }
-        state.pending.push_back(response);
-        self.ready.notify_one();
-        true
+    fn finish_reservation(&mut self, pane: &signal_capsule_nexus::Pane, token: u64) {
+        let owns = self.reserved.get(pane).copied() == Some(token);
+        assert!(owns, "only the reservation token owner may finalize it");
+        self.reserved.remove(pane);
     }
 
-    /// Waits for the next response, or for the queue to close.
-    fn next(&self) -> QueueNext {
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        while state.pending.is_empty() && state.closing.is_none() {
-            state = self.ready.wait(state).unwrap_or_else(|p| p.into_inner());
+    /// Reconciles a listing into Memory, after adopting the creations it
+    /// shows, keeping any pane changed since the listing was captured.
+    fn reconciled(
+        &mut self,
+        session: signal_capsule_nexus::Session,
+        captured: std::collections::HashMap<signal_capsule_nexus::Pane, u64>,
+        pending: Vec<capsule_nexus_core::generated::memory::PendingCreation>,
+        adoption: Option<Adoption>,
+        external: capsule_nexus_core::ExternalResult<Vec<emission_capsule_nexus::PaneObservation>>,
+    ) -> signal_capsule_nexus::Outcome {
+        if let Some((panes, workspaces)) = &adoption {
+            adopt_pending_creations(self, &pending, panes, workspaces);
         }
-        match state.closing {
-            Some(closing) => QueueNext::Closed(closing),
-            None => QueueNext::Response(state.pending.pop_front().expect("nonempty subscriber queue")),
+        let external = protect_newer_state(self, &session, &captured, external);
+        let outcome = self.core.list(session.clone(), external);
+        if matches!(outcome, signal_capsule_nexus::Outcome::Listed(_)) {
+            if let Ok(owned) = self.core.owned_in_session(&session) {
+                for owned in owned {
+                    bump_revision(&mut self.revisions, owned.pane);
+                }
+            }
         }
-    }
-
-    fn set_capacity(&self, capacity: usize) {
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        state.capacity = capacity;
-        if state.pending.len() > capacity {
-            state.closing.get_or_insert(Closing::Lagged);
-            state.pending.clear();
-            self.ready.notify_all();
-        }
-    }
-
-    /// Closes the queue for `closing`, unless it is already closed for
-    /// another reason, which stands.
-    fn close(&self, closing: Closing) {
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        state.closing.get_or_insert(closing);
-        state.pending.clear();
-        self.ready.notify_all();
-    }
-
-    fn is_open(&self) -> bool {
-        self.state.lock().unwrap_or_else(|p| p.into_inner()).closing.is_none()
+        outcome
     }
 }
 
+#[kameo::messages]
+impl Capsule {
+    /// Records a creation as pending under the next creation identifier.
+    #[message]
+    fn prepare_creation(
+        &mut self,
+        principal: shared_translator::Principal,
+        workspace: signal_capsule_nexus::Workspace,
+    ) -> Result<signal_capsule_nexus::CreationId, signal_capsule_nexus::Outcome> {
+        let creation_id = signal_capsule_nexus::CreationId {
+            instance_id: self.instance_id.clone(),
+            sequence: signal_capsule_nexus::Sequence(self.next_creation_sequence),
+        };
+        let Some(next) = self.next_creation_sequence.checked_add(1) else {
+            return Err(signal_capsule_nexus::Outcome::StoreRefused(signal_capsule_nexus::StoreRefusal {
+                memory_refusal: signal_capsule_nexus::MemoryRefusal(signal_capsule_nexus::Message(
+                    "creation sequence exhausted".into(),
+                )),
+                store_phase: signal_capsule_nexus::StorePhase::BeforeEmission,
+            }));
+        };
+        self.core.prepare_creation(capsule_nexus_core::generated::memory::PendingCreation {
+            creation_id: creation_id.clone(),
+            principal,
+            workspace,
+        })?;
+        self.next_creation_sequence = next;
+        Ok(creation_id)
+    }
+
+    /// Joins a creation to the pane herdr made for it.
+    #[message]
+    fn finish_creation(
+        &mut self,
+        creation_id: signal_capsule_nexus::CreationId,
+        principal: shared_translator::Principal,
+        external: capsule_nexus_core::ExternalResult<signal_capsule_nexus::Pane>,
+    ) -> Result<signal_capsule_nexus::Outcome, std::convert::Infallible> {
+        let outcome = self.core.create(creation_id, external);
+        if let signal_capsule_nexus::Outcome::Created(pane) = &outcome {
+            self.revisions.insert(pane.clone(), 1);
+            self.principals.insert(pane.clone(), principal);
+        }
+        Ok(outcome)
+    }
+
+    /// Reserves an owned pane for one attempt.
+    #[message]
+    fn reserve(
+        &mut self,
+        principal: shared_translator::Principal,
+        pane: signal_capsule_nexus::Pane,
+    ) -> Result<u64, signal_capsule_nexus::Outcome> {
+        use signal_capsule_nexus::Outcome;
+        self.core.preflight_owned(&pane)?;
+        if self.principals.get(&pane) != Some(&principal) {
+            return Err(Outcome::Unknown(pane));
+        }
+        if self.reserved.contains_key(&pane) {
+            return Err(Outcome::AttemptInProgress(pane));
+        }
+        let token = self.next_reservation;
+        self.next_reservation = self.next_reservation.wrapping_add(1).max(1);
+        self.reserved.insert(pane, token);
+        Ok(token)
+    }
+
+    #[message]
+    fn finish_start(
+        &mut self,
+        pane: signal_capsule_nexus::Pane,
+        token: u64,
+        command: signal_capsule_nexus::Command,
+        label: signal_capsule_nexus::Label,
+        external: capsule_nexus_core::ExternalResult<signal_capsule_nexus::State>,
+    ) -> Result<signal_capsule_nexus::Outcome, std::convert::Infallible> {
+        self.finish_reservation(&pane, token);
+        let outcome = self.core.start(pane.clone(), command, label, external);
+        if matches!(outcome, signal_capsule_nexus::Outcome::Done | signal_capsule_nexus::Outcome::Uncertain) {
+            bump_revision(&mut self.revisions, pane);
+        }
+        Ok(outcome)
+    }
+
+    #[message]
+    fn finish_prompt(
+        &mut self,
+        pane: signal_capsule_nexus::Pane,
+        token: u64,
+        text: signal_capsule_nexus::Text,
+        external: capsule_nexus_core::ExternalResult<()>,
+    ) -> Result<signal_capsule_nexus::Outcome, std::convert::Infallible> {
+        self.finish_reservation(&pane, token);
+        let outcome = self.core.prompt(pane.clone(), text, external);
+        if matches!(outcome, signal_capsule_nexus::Outcome::Done | signal_capsule_nexus::Outcome::Uncertain) {
+            bump_revision(&mut self.revisions, pane);
+        }
+        Ok(outcome)
+    }
+
+    #[message]
+    fn finish_press(
+        &mut self,
+        pane: signal_capsule_nexus::Pane,
+        token: u64,
+        keys: signal_capsule_nexus::Keys,
+        external: capsule_nexus_core::ExternalResult<()>,
+    ) -> Result<signal_capsule_nexus::Outcome, std::convert::Infallible> {
+        self.finish_reservation(&pane, token);
+        let outcome = self.core.press(pane.clone(), keys, external);
+        if matches!(outcome, signal_capsule_nexus::Outcome::Done | signal_capsule_nexus::Outcome::Uncertain) {
+            bump_revision(&mut self.revisions, pane);
+        }
+        Ok(outcome)
+    }
+
+    #[message]
+    fn finish_close(
+        &mut self,
+        pane: signal_capsule_nexus::Pane,
+        token: u64,
+        external: capsule_nexus_core::ExternalResult<()>,
+    ) -> Result<signal_capsule_nexus::Outcome, std::convert::Infallible> {
+        self.finish_reservation(&pane, token);
+        let outcome = self.core.close(pane.clone(), external);
+        if outcome == signal_capsule_nexus::Outcome::Done {
+            self.revisions.remove(&pane);
+            self.principals.remove(&pane);
+        } else if outcome == signal_capsule_nexus::Outcome::Uncertain {
+            bump_revision(&mut self.revisions, pane);
+        }
+        Ok(outcome)
+    }
+
+    /// Captures what a listing of the session is reconciled against.
+    #[message]
+    fn capture_listing(
+        &mut self,
+        session: signal_capsule_nexus::Session,
+    ) -> Result<Captured, signal_capsule_nexus::Outcome> {
+        let owned = self.core.owned_in_session(&session)?;
+        let pending = self.core.pending_in_session(&session)?;
+        let owners = owned
+            .iter()
+            .filter_map(|owned| self.principals.get(&owned.pane).cloned())
+            .chain(pending.iter().map(|creation| creation.principal.clone()))
+            .collect();
+        Ok((self.revisions.clone(), pending, owners))
+    }
+
+    /// Reconciles a principal's listing and answers it with that
+    /// principal's panes.
+    #[message]
+    fn finish_listing(
+        &mut self,
+        principal: shared_translator::Principal,
+        session: signal_capsule_nexus::Session,
+        captured: std::collections::HashMap<signal_capsule_nexus::Pane, u64>,
+        pending: Vec<capsule_nexus_core::generated::memory::PendingCreation>,
+        adoption: Option<Adoption>,
+        external: capsule_nexus_core::ExternalResult<Vec<emission_capsule_nexus::PaneObservation>>,
+    ) -> Result<signal_capsule_nexus::Outcome, std::convert::Infallible> {
+        let outcome = self.reconciled(session, captured, pending, adoption, external);
+        Ok(filter_listing(outcome, &principal, &self.principals))
+    }
+
+    /// Reconciles the session's own observation, which feeds its subscribers.
+    #[message]
+    fn finish_observation(
+        &mut self,
+        session: signal_capsule_nexus::Session,
+        captured: std::collections::HashMap<signal_capsule_nexus::Pane, u64>,
+        pending: Vec<capsule_nexus_core::generated::memory::PendingCreation>,
+        adoption: Option<Adoption>,
+        external: capsule_nexus_core::ExternalResult<Vec<emission_capsule_nexus::PaneObservation>>,
+    ) {
+        self.reconciled(session, captured, pending, adoption, external);
+    }
+
+    /// Opens a stream on the session's Publisher. The stream holds its place
+    /// among the session's streams until it is dropped.
+    #[message(ctx)]
+    fn subscribe(
+        &mut self,
+        session: signal_capsule_nexus::Session,
+        capacity: nexus::Capacity,
+        ctx: &mut kameo::message::Context<Self, Result<capsule_nexus_core::Subscription, signal_capsule_nexus::Outcome>>,
+    ) -> Result<capsule_nexus_core::Subscription, signal_capsule_nexus::Outcome> {
+        use futures_util::StreamExt;
+        let capsule_nexus_core::Subscription { stream, feed } = self.core.subscribe(&session, capacity)?;
+        let lease = StreamLease {
+            capsule: ctx.actor_ref().clone(),
+            session,
+        };
+        let frames = futures_util::stream::unfold((stream, lease), |(mut stream, lease)| async move {
+            let frame = stream.next().await?;
+            Some((frame, (stream, lease)))
+        });
+        let frames: std::pin::Pin<
+            Box<
+                dyn futures_util::Stream<
+                        Item = signal::Frame<signal_capsule_nexus::Panes, signal_capsule_nexus::Changed>,
+                    > + Send,
+            >,
+        > = Box::pin(frames);
+        Ok(capsule_nexus_core::Subscription {
+            stream: signal::Stream::from(frames),
+            feed,
+        })
+    }
+
+    /// One stream of the session was dropped.
+    #[message]
+    fn unsubscribe(&mut self, session: signal_capsule_nexus::Session) {
+        self.core.unsubscribe(&session);
+    }
+
+    /// How many sessions have a Publisher.
+    #[message]
+    pub fn publication_count(&mut self) -> usize {
+        self.core.publication_count()
+    }
+}
+
+/// A stream's place among its session's streams, given back when the stream
+/// is dropped, however its subscription ended.
+struct StreamLease {
+    capsule: kameo::actor::ActorRef<Capsule>,
+    session: signal_capsule_nexus::Session,
+}
+
+impl Drop for StreamLease {
+    fn drop(&mut self) {
+        let _ = self
+            .capsule
+            .tell(Unsubscribe {
+                session: self.session.clone(),
+            })
+            .try_send();
+    }
+}
+
+/// The attempt an input makes, or for a Subscribe the session it opens on:
+/// a subscription opens on the Publisher and changes nothing in Memory, so it
+/// is no attempt.
 fn operation(
     query: signal_capsule_nexus::Input,
-) -> capsule_nexus_core::generated::operation::Operation {
+) -> Result<capsule_nexus_core::generated::operation::Operation, signal_capsule_nexus::Session> {
     use capsule_nexus_core::generated::operation::{
         Operation, Pressing_Data, Prompting_Data, Starting_Data,
     };
-    match query {
-        signal_capsule_nexus::Input::Create(workspace) => Operation::Creating(workspace),
-        signal_capsule_nexus::Input::Start(start) => Operation::Starting(Starting_Data {
+    use signal_capsule_nexus::Input;
+    Ok(match query {
+        Input::Create(workspace) => Operation::Creating(workspace),
+        Input::Start(start) => Operation::Starting(Starting_Data {
             pane: start.pane,
             command: start.command,
             label: start.label,
         }),
-        signal_capsule_nexus::Input::Prompt(prompt) => Operation::Prompting(Prompting_Data {
+        Input::Prompt(prompt) => Operation::Prompting(Prompting_Data {
             pane: prompt.pane,
             text: prompt.text,
         }),
-        signal_capsule_nexus::Input::Press(press) => Operation::Pressing(Pressing_Data {
+        Input::Press(press) => Operation::Pressing(Pressing_Data {
             pane: press.pane,
             keys: press.keys,
         }),
-        signal_capsule_nexus::Input::Close(pane) => Operation::Closing(pane),
-        signal_capsule_nexus::Input::List(session) => Operation::Listing(session),
-        signal_capsule_nexus::Input::Subscribe(session) => Operation::Subscribing(session),
-    }
+        Input::Close(pane) => Operation::Closing(pane),
+        Input::List(session) => Operation::Listing(session),
+        Input::Subscribe(session) => return Err(session),
+    })
+}
+
+/// An actor step that can refuse: its refusal, or Uncertain when the actor
+/// that owns the state is gone.
+fn settled<T, M>(asked: Result<T, kameo::error::SendError<M, signal_capsule_nexus::Outcome>>) -> Result<T, signal_capsule_nexus::Outcome> {
+    asked.map_err(|error| match error {
+        kameo::error::SendError::HandlerError(outcome) => outcome,
+        _ => signal_capsule_nexus::Outcome::Uncertain,
+    })
+}
+
+/// An actor step that ends an attempt: its outcome, or Uncertain when the
+/// actor that owns the state is gone.
+fn concluded<M>(
+    asked: Result<signal_capsule_nexus::Outcome, kameo::error::SendError<M, std::convert::Infallible>>,
+) -> signal_capsule_nexus::Outcome {
+    asked.unwrap_or(signal_capsule_nexus::Outcome::Uncertain)
 }
 
 impl Dispatcher {
+    /// A dispatcher whose actor runs on `runtime`.
     pub fn new(
         paths: &SocketPaths,
         configuration: Arc<ConfigurationStore>,
         instance_id: signal_capsule_nexus::InstanceId,
+        runtime: tokio::runtime::Handle,
     ) -> Self {
+        use kameo::actor::Spawn;
+        let capsule = {
+            let _entered = runtime.enter();
+            Capsule::spawn_with_mailbox(Capsule::new(instance_id), kameo::mailbox::unbounded())
+        };
         Self {
-            state: std::sync::Mutex::new(DispatcherState {
-                core: capsule_nexus_core::Core::new(capsule_nexus_core::InMemory::default()),
-                principals: std::collections::HashMap::new(),
-                reserved: std::collections::HashMap::new(),
-                revisions: std::collections::HashMap::new(),
-                next_reservation: 1,
-                instance_id,
-                next_creation_sequence: 1,
-            }),
+            capsule,
             emitter: Arc::new(SocketEmitter {
                 translator_socket: paths.translator.clone(),
             }),
-            subscriptions: std::sync::Mutex::new(SubscriptionHub::default()),
-            next_subscription_generation: std::sync::atomic::AtomicU64::new(1),
             configuration,
+            runtime,
         }
     }
 
+    /// Attempts one input as `principal` and answers it: once, or for a
+    /// Subscribe with the stream of the session's panes. Each step on the
+    /// state is one message to the actor; the herdr calls run between them,
+    /// on this thread, which is not the runtime's.
     pub fn dispatch_as(
         &self,
         principal: shared_translator::Principal,
         query: signal_capsule_nexus::Input,
         configuration: Arc<ReadyCoreConfiguration>,
-    ) -> PublicDispatch {
+    ) -> signal_capsule_nexus::Answer {
         use emission_capsule_nexus::{
             AgentPrompt_Data, AgentStart_Data, Herdr, SendKeys_Data, Verb, WorkspaceCreate_Data,
         };
         use capsule_nexus_core::generated::operation::Operation;
-        use signal_capsule_nexus::Output;
-        let response = match operation(query) {
+        use signal_capsule_nexus::{Answer, Output};
+        let attempt = match operation(query) {
+            Ok(attempt) => attempt,
+            Err(session) => return self.open_subscription(session, &configuration),
+        };
+        let response = match attempt {
             Operation::Creating(workspace) => {
-                let creation_id = {
-                    let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                    let creation_id = signal_capsule_nexus::CreationId {
-                        instance_id: state.instance_id.clone(),
-                        sequence: signal_capsule_nexus::Sequence(state.next_creation_sequence),
-                    };
-                    let Some(next) = state.next_creation_sequence.checked_add(1) else {
-                        return PublicDispatch::Answered(Output::Created(signal_capsule_nexus::Outcome::StoreRefused(
-                            signal_capsule_nexus::StoreRefusal {
-                                memory_refusal: signal_capsule_nexus::MemoryRefusal(
-                                    signal_capsule_nexus::Message("creation sequence exhausted".into()),
-                                ),
-                                store_phase: signal_capsule_nexus::StorePhase::BeforeEmission,
-                            },
-                        )));
-                    };
-                    let pending = capsule_nexus_core::generated::memory::PendingCreation {
-                        creation_id: creation_id.clone(),
-                        principal: principal.clone(),
-                        workspace: workspace.clone(),
-                    };
-                    if let Err(outcome) = state.core.prepare_creation(pending) {
-                        return PublicDispatch::Answered(Output::Created(outcome));
-                    }
-                    state.next_creation_sequence = next;
-                    creation_id
+                let creation_id = match settled(
+                    self.capsule
+                        .ask(PrepareCreation {
+                            principal: principal.clone(),
+                            workspace: workspace.clone(),
+                        })
+                        .blocking_send(),
+                ) {
+                    Ok(creation_id) => creation_id,
+                    Err(outcome) => return Answer::Once(Output::Created(outcome)),
                 };
                 let external = self.execute(
                     &configuration,
@@ -888,18 +1253,20 @@ impl Dispatcher {
                         }),
                     },
                 );
-                let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                let outcome = state.core.create(creation_id, created_result(external));
-                if let signal_capsule_nexus::Outcome::Created(pane) = &outcome {
-                    state.revisions.insert(pane.clone(), 1);
-                    state.principals.insert(pane.clone(), principal);
-                }
-                Output::Created(outcome)
+                Output::Created(concluded(
+                    self.capsule
+                        .ask(FinishCreation {
+                            creation_id,
+                            principal,
+                            external: created_result(external),
+                        })
+                        .blocking_send(),
+                ))
             }
             Operation::Starting(start) => {
-                let reservation = match self.reserve(&principal, &start.pane) {
+                let token = match self.reserve(&principal, &start.pane) {
                     Ok(token) => token,
-                    Err(outcome) => return PublicDispatch::Answered(Output::Started(outcome)),
+                    Err(outcome) => return Answer::Once(Output::Started(outcome)),
                 };
                 let command = start.command.clone();
                 let external = self.execute(
@@ -916,24 +1283,22 @@ impl Dispatcher {
                         }),
                     },
                 );
-                let mut state = self.finish_reservation(&start.pane, reservation);
-                let pane = start.pane;
-                let outcome = state
-                    .core
-                    .start(pane.clone(), command, start.label, started_result(external));
-                if matches!(
-                    outcome,
-                    signal_capsule_nexus::Outcome::Done
-                        | signal_capsule_nexus::Outcome::Uncertain
-                ) {
-                    bump_revision(&mut state.revisions, pane);
-                }
-                Output::Started(outcome)
+                Output::Started(concluded(
+                    self.capsule
+                        .ask(FinishStart {
+                            pane: start.pane,
+                            token,
+                            command,
+                            label: start.label,
+                            external: started_result(external),
+                        })
+                        .blocking_send(),
+                ))
             }
             Operation::Prompting(prompt) => {
-                let reservation = match self.reserve(&principal, &prompt.pane) {
+                let token = match self.reserve(&principal, &prompt.pane) {
                     Ok(token) => token,
-                    Err(outcome) => return PublicDispatch::Answered(Output::Prompted(outcome)),
+                    Err(outcome) => return Answer::Once(Output::Prompted(outcome)),
                 };
                 let text = prompt.text.clone();
                 let external = self.execute(
@@ -946,22 +1311,21 @@ impl Dispatcher {
                         }),
                     },
                 );
-                let mut state = self.finish_reservation(&prompt.pane, reservation);
-                let pane = prompt.pane;
-                let outcome = state.core.prompt(pane.clone(), text, done_result(external));
-                if matches!(
-                    outcome,
-                    signal_capsule_nexus::Outcome::Done
-                        | signal_capsule_nexus::Outcome::Uncertain
-                ) {
-                    bump_revision(&mut state.revisions, pane);
-                }
-                Output::Prompted(outcome)
+                Output::Prompted(concluded(
+                    self.capsule
+                        .ask(FinishPrompt {
+                            pane: prompt.pane,
+                            token,
+                            text,
+                            external: done_result(external),
+                        })
+                        .blocking_send(),
+                ))
             }
             Operation::Pressing(press) => {
-                let reservation = match self.reserve(&principal, &press.pane) {
+                let token = match self.reserve(&principal, &press.pane) {
                     Ok(token) => token,
-                    Err(outcome) => return PublicDispatch::Answered(Output::Pressed(outcome)),
+                    Err(outcome) => return Answer::Once(Output::Pressed(outcome)),
                 };
                 let keys = press.keys.clone();
                 let external = self.execute(
@@ -974,22 +1338,21 @@ impl Dispatcher {
                         }),
                     },
                 );
-                let mut state = self.finish_reservation(&press.pane, reservation);
-                let pane = press.pane;
-                let outcome = state.core.press(pane.clone(), keys, done_result(external));
-                if matches!(
-                    outcome,
-                    signal_capsule_nexus::Outcome::Done
-                        | signal_capsule_nexus::Outcome::Uncertain
-                ) {
-                    bump_revision(&mut state.revisions, pane);
-                }
-                Output::Pressed(outcome)
+                Output::Pressed(concluded(
+                    self.capsule
+                        .ask(FinishPress {
+                            pane: press.pane,
+                            token,
+                            keys,
+                            external: done_result(external),
+                        })
+                        .blocking_send(),
+                ))
             }
             Operation::Closing(pane) => {
-                let reservation = match self.reserve(&principal, &pane) {
+                let token = match self.reserve(&principal, &pane) {
                     Ok(token) => token,
-                    Err(outcome) => return PublicDispatch::Answered(Output::Closed(outcome)),
+                    Err(outcome) => return Answer::Once(Output::Closed(outcome)),
                 };
                 let external = self.execute(
                     &configuration,
@@ -998,94 +1361,161 @@ impl Dispatcher {
                         verb: Verb::PaneClose(pane.pane_id.clone()),
                     },
                 );
-                let mut state = self.finish_reservation(&pane, reservation);
-                let externally_closed = matches!(
-                    &external,
-                    EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Done)
-                ) || is_absent_close(&external);
-                if externally_closed {
-                    self.publish_closed(&principal, &pane);
-                }
-                let outcome = state.core.close(pane.clone(), closed_result(external));
-                if outcome == signal_capsule_nexus::Outcome::Done {
-                    state.revisions.remove(&pane);
-                    state.principals.remove(&pane);
-                } else if outcome == signal_capsule_nexus::Outcome::Uncertain {
-                    bump_revision(&mut state.revisions, pane);
-                }
-                Output::Closed(outcome)
+                Output::Closed(concluded(
+                    self.capsule
+                        .ask(FinishClose {
+                            pane,
+                            token,
+                            external: closed_result(external),
+                        })
+                        .blocking_send(),
+                ))
             }
             Operation::Listing(session) => {
-                let (captured, pending) = {
-                    let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                    let owned = match state.core.owned_in_session(&session) {
-                        Ok(owned) => owned,
-                        Err(outcome) => return PublicDispatch::Answered(Output::Listed(outcome)),
+                let (captured, pending, owners) =
+                    match settled(self.capsule.ask(CaptureListing { session: session.clone() }).blocking_send()) {
+                        Ok(captured) => captured,
+                        Err(outcome) => return Answer::Once(Output::Listed(outcome)),
                     };
-                    let pending = match state.core.pending_in_session(&session) {
-                        Ok(pending) => pending,
-                        Err(outcome) => return PublicDispatch::Answered(Output::Listed(outcome)),
-                    };
-                    let owns_any = owned.iter().any(|owned| {
-                        state.principals.get(&owned.pane) == Some(&principal)
-                    }) || pending.iter().any(|creation| creation.principal == principal);
-                    if !owns_any {
-                        return PublicDispatch::Answered(Output::Listed(signal_capsule_nexus::Outcome::Listed(Vec::new())));
-                    }
-                    (state.revisions.clone(), pending)
-                };
-                let panes = self.execute(
-                    &configuration,
+                if !owners.contains(&principal) {
+                    return Answer::Once(Output::Listed(signal_capsule_nexus::Outcome::Listed(Vec::new())));
+                }
+                let (adoption, external) = self.observed(&configuration, &session, &pending);
+                Output::Listed(concluded(
+                    self.capsule
+                        .ask(FinishListing {
+                            principal,
+                            session,
+                            captured,
+                            pending,
+                            adoption,
+                            external,
+                        })
+                        .blocking_send(),
+                ))
+            }
+        };
+        Answer::Once(response)
+    }
+
+    /// Opens a stream on the session's Publisher, whoever asks: observing is
+    /// open, acting stays the owner's. The stream that makes the Publisher
+    /// starts the session's feed, which lives as long as the Publisher.
+    fn open_subscription(
+        &self,
+        session: signal_capsule_nexus::Session,
+        configuration: &ReadyCoreConfiguration,
+    ) -> signal_capsule_nexus::Answer {
+        use signal_capsule_nexus::{Answer, Output};
+        let capacity = nexus::Capacity(
+            i64::try_from(configuration.subscriber_capacity).expect("validated i64 subscriber capacity"),
+        );
+        match settled(self.capsule.ask(Subscribe { session: session.clone(), capacity }).blocking_send()) {
+            Ok(subscription) => {
+                if let Some(ended) = subscription.feed {
+                    self.runtime.spawn(self.clone().feed(session, ended));
+                }
+                Answer::Subscribed(subscription.stream)
+            }
+            Err(outcome) => Answer::Once(Output::SubscribeRefused(outcome)),
+        }
+    }
+
+    /// The session's feed: one observation of the session every polling
+    /// interval, reconciled into Memory, whose changes the Publisher hands
+    /// to the subscribers, until the Publisher is dropped.
+    async fn feed(self, session: signal_capsule_nexus::Session, mut ended: tokio::sync::oneshot::Receiver<()>) {
+        loop {
+            let Some(configuration) = self.configuration.snapshot() else {
+                return;
+            };
+            tokio::select! {
+                biased;
+                _ = &mut ended => return,
+                () = tokio::time::sleep(configuration.polling) => {}
+            }
+            let observing = self.clone();
+            let observed = session.clone();
+            if tokio::task::spawn_blocking(move || observing.observe(observed, configuration))
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+    }
+
+    /// Observes the whole session, whoever owns its panes, and reconciles
+    /// the observation into Memory. A session with nothing owned or pending
+    /// is not observed.
+    fn observe(&self, session: signal_capsule_nexus::Session, configuration: Arc<ReadyCoreConfiguration>) {
+        let Ok((captured, pending, owners)) =
+            settled(self.capsule.ask(CaptureListing { session: session.clone() }).blocking_send())
+        else {
+            return;
+        };
+        if owners.is_empty() {
+            return;
+        }
+        let (adoption, external) = self.observed(&configuration, &session, &pending);
+        let _ = self
+            .capsule
+            .ask(FinishObservation {
+                session,
+                captured,
+                pending,
+                adoption,
+                external,
+            })
+            .blocking_send();
+    }
+
+    /// The herdr calls a listing makes: the panes, then the agents, and the
+    /// workspaces while a creation is pending.
+    fn observed(
+        &self,
+        configuration: &ReadyCoreConfiguration,
+        session: &signal_capsule_nexus::Session,
+        pending: &[capsule_nexus_core::generated::memory::PendingCreation],
+    ) -> (
+        Option<Adoption>,
+        capsule_nexus_core::ExternalResult<Vec<emission_capsule_nexus::PaneObservation>>,
+    ) {
+        use emission_capsule_nexus::{Herdr, Verb};
+        let panes = self.execute(
+            configuration,
+            Herdr {
+                session: session.clone(),
+                verb: Verb::PaneList,
+            },
+        );
+        let (pane_listings, external) = match pane_listing_result(panes) {
+            Ok(panes) => {
+                let agents = self.execute(
+                    configuration,
                     Herdr {
                         session: session.clone(),
-                        verb: Verb::PaneList,
+                        verb: Verb::AgentList,
                     },
                 );
-                let (pane_listings, external) = match pane_listing_result(panes) {
-                    Ok(panes) => {
-                        let agents = self.execute(
-                            &configuration,
-                            Herdr {
-                                session: session.clone(),
-                                verb: Verb::AgentList,
-                            },
-                        );
-                        let external = join_listings(panes.clone(), agent_listing_result(agents));
-                        (Some(panes), external)
-                    }
-                    Err(result) => (None, result),
-                };
-                let workspace_listings = if pending.is_empty() {
-                    None
-                } else {
-                    workspace_listing_result(self.execute(
-                        &configuration,
-                        Herdr {
-                            session: session.clone(),
-                            verb: Verb::WorkspaceList,
-                        },
-                    ))
-                    .ok()
-                };
-                let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                if let (Some(panes), Some(workspaces)) = (&pane_listings, &workspace_listings) {
-                    adopt_pending_creations(&mut state, &pending, panes, workspaces);
-                }
-                let external = protect_newer_state(&state, &session, &captured, external);
-                let outcome = state.core.list(session.clone(), external);
-                let outcome = filter_listing(outcome, &principal, &state.principals);
-                if matches!(outcome, signal_capsule_nexus::Outcome::Listed(_)) {
-                    if let Ok(owned) = state.core.owned_in_session(&session) {
-                        for owned in owned {
-                            bump_revision(&mut state.revisions, owned.pane);
-                        }
-                    }
-                }
-                Output::Listed(outcome)
+                let external = join_listings(panes.clone(), agent_listing_result(agents));
+                (Some(panes), external)
             }
-            Operation::Subscribing(session) => return PublicDispatch::Subscribe(session),
+            Err(result) => (None, result),
         };
-        PublicDispatch::Answered(response)
+        let workspace_listings = if pending.is_empty() {
+            None
+        } else {
+            workspace_listing_result(self.execute(
+                configuration,
+                Herdr {
+                    session: session.clone(),
+                    verb: Verb::WorkspaceList,
+                },
+            ))
+            .ok()
+        };
+        (pane_listings.zip(workspace_listings), external)
     }
 
     pub fn peer_grant_is_current(
@@ -1098,241 +1528,19 @@ impl Dispatcher {
             .peer_grant_is_current(caller, peer_id, generation)
     }
 
-    fn reserve(&self, principal: &shared_translator::Principal, pane: &signal_capsule_nexus::Pane) -> Result<u64, signal_capsule_nexus::Outcome> {
-        use signal_capsule_nexus::Outcome;
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        state.core.preflight_owned(pane)?;
-        if state.principals.get(pane) != Some(principal) {
-            return Err(Outcome::Unknown(pane.clone()));
-        }
-        if state.reserved.contains_key(pane) {
-            return Err(Outcome::AttemptInProgress(pane.clone()));
-        }
-        let token = state.next_reservation;
-        state.next_reservation = state.next_reservation.wrapping_add(1).max(1);
-        state.reserved.insert(pane.clone(), token);
-        Ok(token)
-    }
-
-    fn finish_reservation(
+    fn reserve(
         &self,
+        principal: &shared_translator::Principal,
         pane: &signal_capsule_nexus::Pane,
-        token: u64,
-    ) -> std::sync::MutexGuard<'_, DispatcherState> {
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let owns = state.reserved.get(pane).copied() == Some(token);
-        assert!(owns, "only the reservation token owner may finalize it");
-        state.reserved.remove(pane);
-        state
-    }
-
-    /// Opens a nondurable subscription on an exchange of `connection` and
-    /// registers it in the session's shared poll source. Its acknowledgement
-    /// and the current state are the exchange's first answers, and each change
-    /// after them is one more, until its queue closes and the exchange ends as
-    /// the `Closing` says. Each subscriber has one bounded FIFO and one writer;
-    /// publishing never waits for socket I/O.
-    pub fn subscribe_bound(
-        self: &Arc<Self>,
-        connection: &Arc<PublicConnection>,
-        exchange: signal::ExchangeId,
-        principal: shared_translator::Principal,
-        peer_grant: Option<(shared_translator::PeerId, u64)>,
-        session: signal_capsule_nexus::Session,
-        configuration: Arc<ReadyCoreConfiguration>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        use signal_capsule_nexus::{Changed_Data, Output};
-        let (acknowledgement, current) = {
-            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            let acknowledgement = Output::Subscribed(state.core.subscribe(
-                session.clone(),
-                capsule_nexus_core::ExternalResult::Succeeded(()),
-            ));
-            let current = state
-                .core
-                .owned_in_session(&session)
-                .map_err(|_| std::io::Error::other("Memory refused subscription snapshot"))?
-                .into_iter()
-                .filter(|known| state.principals.get(&known.pane) == Some(&principal))
-                .map(|known| (known.pane, known.state))
-                .collect::<std::collections::HashMap<_, _>>();
-            (acknowledgement, current)
-        };
-        let queue = Arc::new(SubscriberQueue::new(configuration.subscriber_capacity));
-        if !queue.enqueue(acknowledgement) {
-            return Err("subscriber queue refused its acknowledgement".into());
-        }
-        for (pane, state) in &current {
-            if !queue.enqueue(Output::Changed(Changed_Data {
+    ) -> Result<u64, signal_capsule_nexus::Outcome> {
+        settled(
+            self.capsule
+                .ask(Reserve {
+                    principal: principal.clone(),
                     pane: pane.clone(),
-                    state: state.clone(),
-                })) {
-                return Err("subscriber queue cannot hold its initial snapshot".into());
-            }
-        }
-        self.configuration.register_subscriber(&queue);
-        if let shared_translator::Principal::Peer(peer_id) = &principal {
-            let Some((granted_id, generation)) = peer_grant else {
-                queue.close(Closing::Withdrawn);
-                return Err("configured peer subscription lacks its binding generation".into());
-            };
-            if granted_id != *peer_id
-                || !self.configuration.register_peer_subscriber(peer_id, generation, &queue)
-            {
-                queue.close(Closing::Withdrawn);
-                return Err("configured peer binding changed before subscription registration".into());
-            }
-        }
-        connection.carry(exchange, &queue);
-        let writer_queue = Arc::clone(&queue);
-        let writer_configuration = Arc::clone(&self.configuration);
-        let writer_connection = Arc::clone(connection);
-        std::thread::spawn(move || loop {
-            match writer_queue.next() {
-                QueueNext::Closed(closing) => {
-                    writer_connection.conclude(exchange, closing);
-                    return;
-                }
-                QueueNext::Response(response) => {
-                    let Some(configuration) = writer_configuration.snapshot() else {
-                        writer_queue.close(Closing::Withdrawn);
-                        continue;
-                    };
-                    if writer_connection.stream(exchange, response, &configuration).is_err() {
-                        writer_queue.close(Closing::Withdrawn);
-                    }
-                }
-            }
-        });
-        let mut hub = self
-            .subscriptions
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let key = (principal.clone(), session.clone());
-        if let Some(existing) = hub.sessions.get_mut(&key) {
-            existing.subscribers.push(Subscriber {
-                queue,
-                delivered: current,
-            });
-            return Ok(());
-        }
-        let generation = self
-            .next_subscription_generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        hub.sessions.insert(
-            key,
-            SessionSubscription {
-                generation,
-                subscribers: vec![Subscriber {
-                    queue,
-                    delivered: current,
-                }],
-            },
-        );
-        drop(hub);
-        let dispatcher = Arc::clone(self);
-        std::thread::spawn(move || dispatcher.poll_subscription(principal, session, generation));
-        Ok(())
-    }
-
-    fn poll_subscription(self: Arc<Self>, principal: shared_translator::Principal, session: signal_capsule_nexus::Session, generation: u64) {
-        use signal_capsule_nexus::{Changed_Data, Outcome, Input, Output};
-        loop {
-            let Some(configuration) = self.configuration.snapshot() else {
-                return;
-            };
-            {
-                let hub = self
-                    .subscriptions
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                let Some(subscription) = hub.sessions.get(&(principal.clone(), session.clone())) else {
-                    return;
-                };
-                if subscription.generation != generation {
-                    return;
-                }
-            }
-            std::thread::sleep(configuration.polling);
-            {
-                let mut hub = self
-                    .subscriptions
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                let Some(subscription) = hub.sessions.get_mut(&(principal.clone(), session.clone())) else {
-                    return;
-                };
-                if subscription.generation != generation {
-                    return;
-                }
-                subscription.subscribers.retain(|subscriber| subscriber.queue.is_open());
-                if subscription.subscribers.is_empty() {
-                    hub.sessions.remove(&(principal.clone(), session.clone()));
-                    return;
-                }
-            }
-            let response = match self.dispatch_as(
-                principal.clone(),
-                Input::List(session.clone()),
-                Arc::clone(&configuration),
-            ) {
-                PublicDispatch::Answered(response) => response,
-                PublicDispatch::Subscribe(_) => return,
-            };
-            let complete = matches!(response, Output::Listed(Outcome::Listed(_)));
-            // Hold Memory stable through publication. Close uses the same
-            // state-before-hub order, so an older poll can never reopen a
-            // pane after its terminal Dead event.
-            let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            let current = if complete {
-                state.core.owned_in_session(&session).ok().map(|known| {
-                    known
-                        .into_iter()
-                        .filter(|known| state.principals.get(&known.pane) == Some(&principal))
-                        .map(|known| (known.pane, known.state))
-                        .collect::<std::collections::HashMap<_, _>>()
                 })
-            } else {
-                None
-            };
-            let mut hub = self
-                .subscriptions
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let Some(subscription) = hub.sessions.get_mut(&(principal.clone(), session.clone())) else {
-                return;
-            };
-            if subscription.generation != generation {
-                return;
-            }
-            if let Some(current) = current {
-                subscription.subscribers.retain_mut(|subscriber| {
-                    let changes = current
-                        .iter()
-                        .filter(|(pane, state)| subscriber.delivered.get(*pane) != Some(*state))
-                        .map(|(pane, state)| {
-                            Output::Changed(Changed_Data {
-                                pane: pane.clone(),
-                                state: state.clone(),
-                            })
-                        })
-                        .collect::<Vec<_>>();
-                    let delivered = changes
-                        .into_iter()
-                        .all(|change| subscriber.queue.enqueue(change));
-                    if delivered {
-                        subscriber.delivered = current.clone();
-                    }
-                    delivered
-                });
-            }
-            if subscription.subscribers.is_empty() {
-                hub.sessions.remove(&(principal.clone(), session.clone()));
-                return;
-            }
-            drop(hub);
-            drop(state);
-        }
+                .blocking_send(),
+        )
     }
 
     fn execute(
@@ -1341,30 +1549,6 @@ impl Dispatcher {
         herdr: emission_capsule_nexus::Herdr,
     ) -> EmissionResult {
         self.emitter.emit(configuration, herdr)
-    }
-
-    fn publish_closed(&self, principal: &shared_translator::Principal, pane: &signal_capsule_nexus::Pane) {
-        use signal_capsule_nexus::{Changed_Data, Output, State};
-        let mut hub = self
-            .subscriptions
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(subscription) = hub.sessions.get_mut(&(principal.clone(), pane.session.clone())) else {
-            return;
-        };
-        subscription.subscribers.retain_mut(|subscriber| {
-            if subscriber.delivered.get(pane) == Some(&State::Dead) {
-                return subscriber.queue.is_open();
-            }
-            let delivered = subscriber.queue.enqueue(Output::Changed(Changed_Data {
-                pane: pane.clone(),
-                state: State::Dead,
-            }));
-            if delivered {
-                subscriber.delivered.insert(pane.clone(), State::Dead);
-            }
-            delivered
-        });
     }
 }
 
@@ -1447,7 +1631,7 @@ fn bump_revision(
 }
 
 fn protect_newer_state(
-    state: &DispatcherState,
+    state: &Capsule,
     session: &signal_capsule_nexus::Session,
     captured: &std::collections::HashMap<signal_capsule_nexus::Pane, u64>,
     external: capsule_nexus_core::ExternalResult<Vec<emission_capsule_nexus::PaneObservation>>,
@@ -1615,7 +1799,7 @@ fn workspace_listing_result(
 }
 
 fn adopt_pending_creations(
-    state: &mut DispatcherState,
+    state: &mut Capsule,
     pending: &[capsule_nexus_core::generated::memory::PendingCreation],
     panes: &[emission_capsule_nexus::PaneListing],
     workspaces: &[emission_capsule_nexus::WorkspaceListing],
@@ -1725,8 +1909,7 @@ pub struct ConfigurationStore {
     configuration_transaction: std::sync::Mutex<()>,
     partial: RwLock<PartialConfiguration>,
     current: RwLock<Option<Arc<ReadyCoreConfiguration>>>,
-    subscriber_queues: std::sync::Mutex<Vec<std::sync::Weak<SubscriberQueue>>>,
-    peer_subscriber_queues: std::sync::Mutex<std::collections::HashMap<shared_translator::PeerId, Vec<std::sync::Weak<SubscriberQueue>>>>,
+    peer_subscriptions: std::sync::Mutex<std::collections::HashMap<shared_translator::PeerId, Vec<std::sync::Weak<SubscriptionClosing>>>>,
     peers: std::sync::Mutex<std::collections::HashMap<shared_translator::PeerId, BoundPeer>>,
     next_peer_generation: std::sync::atomic::AtomicU64,
 }
@@ -1887,7 +2070,6 @@ impl ConfigurationStore {
         }
         *self.partial.write().unwrap_or_else(|p| p.into_inner()) = candidate;
         if let Some(validated) = validated {
-            self.apply_subscriber_capacity(validated.subscriber_capacity);
             *self.current.write().unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(validated));
         }
         Output::Configured(core_meta_capsule_nexus::Configured_Data {
@@ -1971,43 +2153,44 @@ impl ConfigurationStore {
             core_meta_capsule_nexus::CoreSet::RemovePeer(peer_id) => peer_id,
             _ => return,
         };
-        if let Some(queues) = self.peer_subscriber_queues
+        if let Some(subscriptions) = self.peer_subscriptions
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .remove(peer_id)
         {
-            for queue in queues.into_iter().filter_map(|queue| queue.upgrade()) {
-                queue.close(Closing::Withdrawn);
+            for closing in subscriptions.into_iter().filter_map(|closing| closing.upgrade()) {
+                closing.close(Closing::Withdrawn);
             }
         }
     }
 
-    fn register_peer_subscriber(&self, peer_id: &shared_translator::PeerId, generation: u64, queue: &Arc<SubscriberQueue>) -> bool {
-        self.register_peer_subscriber_after_validation(peer_id, generation, queue, || {})
+    fn register_peer_subscriber(&self, peer_id: &shared_translator::PeerId, generation: u64, closing: &Arc<SubscriptionClosing>) -> bool {
+        self.register_peer_subscriber_after_validation(peer_id, generation, closing, || {})
     }
 
     fn register_peer_subscriber_after_validation(
         &self,
         peer_id: &shared_translator::PeerId,
         generation: u64,
-        queue: &Arc<SubscriberQueue>,
+        closing: &Arc<SubscriptionClosing>,
         after_validation: impl FnOnce(),
     ) -> bool {
         let peers = self.peers.lock().unwrap_or_else(|p| p.into_inner());
         if peers.get(peer_id).map(|peer| peer.generation) != Some(generation) {
-            queue.close(Closing::Withdrawn);
+            closing.close(Closing::Withdrawn);
             return false;
         }
         // Rebinding takes the same peers lock before it removes and closes the
-        // old generation's queues.  Retaining this guard through insertion
-        // makes validation and registration one transaction with invalidation.
+        // old generation's subscriptions. Retaining this guard through
+        // insertion makes validation and registration one transaction with
+        // invalidation.
         after_validation();
-        self.peer_subscriber_queues
+        self.peer_subscriptions
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .entry(peer_id.clone())
             .or_default()
-            .push(Arc::downgrade(queue));
+            .push(Arc::downgrade(closing));
         true
     }
 
@@ -2018,27 +2201,6 @@ impl ConfigurationStore {
             .clone()
     }
 
-    fn register_subscriber(&self, queue: &Arc<SubscriberQueue>) {
-        self.subscriber_queues
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .push(Arc::downgrade(queue));
-    }
-
-    fn apply_subscriber_capacity(&self, capacity: usize) {
-        let mut queues = self
-            .subscriber_queues
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        queues.retain(|queue| {
-            if let Some(queue) = queue.upgrade() {
-                queue.set_capacity(capacity);
-                true
-            } else {
-                false
-            }
-        });
-    }
 }
 
 fn readiness(candidate: &PartialConfiguration) -> meta_signal_capsule_nexus::Readiness {
@@ -2093,13 +2255,30 @@ mod tests {
         fn answered(self) -> Option<signal_capsule_nexus::Output>;
     }
 
-    impl AnsweredForTest for PublicDispatch {
+    impl AnsweredForTest for signal_capsule_nexus::Answer {
         fn answered(self) -> Option<signal_capsule_nexus::Output> {
             match self {
-                Self::Answered(response) => Some(response),
-                Self::Subscribe(_) => None,
+                Self::Once(response) => Some(response),
+                Self::Subscribed(_) => None,
             }
         }
+    }
+
+    /// The runtime every test's actor, connections and feeds run on.
+    fn test_runtime() -> &'static tokio::runtime::Runtime {
+        static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+        RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime")
+        })
+    }
+
+    fn login() -> shared_translator::Principal {
+        shared_translator::Principal::Login(shared_translator::UserId(i64::from(
+            nix::unistd::getuid().as_raw(),
+        )))
     }
 
     trait DispatcherForTest {
@@ -2111,11 +2290,17 @@ mod tests {
         ) -> signal_capsule_nexus::Output;
         fn subscription_source_count(&self) -> usize;
         fn subscribe(
-            self: &Arc<Self>,
-            stream: std::os::unix::net::UnixStream,
+            &self,
             session: signal_capsule_nexus::Session,
             configuration: Arc<ReadyCoreConfiguration>,
-        ) -> Result<(), Box<dyn std::error::Error>>;
+        ) -> std::os::unix::net::UnixStream;
+        fn subscribe_as(
+            &self,
+            authority: PublicAuthority,
+            user_id: shared_translator::UserId,
+            session: signal_capsule_nexus::Session,
+            configuration: Arc<ReadyCoreConfiguration>,
+        ) -> std::os::unix::net::UnixStream;
     }
 
     impl DispatcherForTest for Dispatcher {
@@ -2128,6 +2313,7 @@ mod tests {
                 paths,
                 configuration,
                 signal_capsule_nexus::InstanceId("test-instance".into()),
+                test_runtime().handle().clone(),
             );
             dispatcher.emitter = emitter;
             dispatcher
@@ -2138,56 +2324,69 @@ mod tests {
             query: signal_capsule_nexus::Input,
             configuration: Arc<ReadyCoreConfiguration>,
         ) -> signal_capsule_nexus::Output {
-            self.dispatch_as(
-                shared_translator::Principal::Login(shared_translator::UserId(i64::from(
-                    nix::unistd::getuid().as_raw(),
-                ))),
-                query,
-                configuration,
-            )
-            .answered()
-            .expect("test helper received a streaming subscription")
+            self.dispatch_as(login(), query, configuration)
+                .answered()
+                .expect("test helper received a streaming subscription")
         }
 
         fn subscription_source_count(&self) -> usize {
-            self.subscriptions
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .sessions
-                .len()
+            self.capsule
+                .ask(PublicationCount)
+                .blocking_send()
+                .expect("the actor answers")
         }
 
-        /// A greeted connection on `stream` whose first exchange is a
-        /// Subscribe from the login, served as the public socket serves it.
+        /// A greeted connection whose first exchange is a Subscribe from the
+        /// login, served as the public socket serves it; the client end, with
+        /// the greeting read.
         fn subscribe(
-            self: &Arc<Self>,
-            stream: std::os::unix::net::UnixStream,
+            &self,
             session: signal_capsule_nexus::Session,
             configuration: Arc<ReadyCoreConfiguration>,
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            use signal::{ExchangeTracking, Greeted};
-            let connection = PublicConnection::new(stream, PublicAuthority::Translator)?;
-            {
-                let mut ledger = connection.ledger.lock().expect("ledger");
-                ledger.greet().expect("a fresh connection is greeted once");
-                ledger.admit(signal::FIRST_EXCHANGE).expect("the first exchange is admitted");
-            }
-            self.subscribe_bound(
-                &connection,
-                signal::FIRST_EXCHANGE,
-                shared_translator::Principal::Login(shared_translator::UserId(i64::from(
-                    nix::unistd::getuid().as_raw(),
-                ))),
-                None,
+        ) -> std::os::unix::net::UnixStream {
+            self.subscribe_as(
+                PublicAuthority::Translator,
+                shared_translator::UserId(i64::from(nix::unistd::getuid().as_raw())),
                 session,
                 configuration,
-            )?;
-            let dispatcher = Arc::clone(self);
-            std::thread::spawn(move || {
-                connection.listen(&dispatcher);
-                connection.end();
-            });
-            Ok(())
+            )
+        }
+
+        /// A Subscribe whose Call names `user_id`, on a connection served under
+        /// `authority`.
+        fn subscribe_as(
+            &self,
+            authority: PublicAuthority,
+            user_id: shared_translator::UserId,
+            session: signal_capsule_nexus::Session,
+            configuration: Arc<ReadyCoreConfiguration>,
+        ) -> std::os::unix::net::UnixStream {
+            use capsule_nexus_wire::exchange::{Patience, QueryingConnection};
+            use capsule_nexus_wire::public_call::{Call_Data, Input, Output};
+            let (server, client) = std::os::unix::net::UnixStream::pair().expect("pair");
+            let caller = capsule_nexus_wire::frame::peer_caller(&client).expect("caller");
+            test_runtime().spawn(PublicConnection::serve(
+                server,
+                authority,
+                self.clone(),
+                configuration,
+            ));
+            let mut querying = QueryingConnection::<Input, Output>::greeted(
+                client.try_clone().expect("clone"),
+                Patience::Progress(Duration::from_millis(500)),
+                signal::FrameCapacity::from(4096),
+            )
+            .expect("greeted");
+            let exchange = querying
+                .open(Input::Call(Call_Data {
+                    caller: shared_translator::Caller { user_id, ..caller },
+                    public_input: capsule_nexus_wire::public_payload::Input(
+                        signal_capsule_nexus::Input::Subscribe(session),
+                    ),
+                }))
+                .expect("subscribe");
+            assert_eq!(exchange, signal::FIRST_EXCHANGE);
+            client
         }
     }
 
@@ -2340,7 +2539,7 @@ mod tests {
             },
         };
         assert!(matches!(store.configure(CoreSet::Peer(binding.clone()), || Ok(())), core_meta_capsule_nexus::Output::Configured(_)));
-        let queue = Arc::new(SubscriberQueue::new(1));
+        let queue = Arc::new(SubscriptionClosing::default());
         assert!(store.register_peer_subscriber(&peer_id, 1, &queue));
         assert!(queue.is_open());
         assert!(matches!(store.configure(CoreSet::Peer(binding), || Ok(())), core_meta_capsule_nexus::Output::Configured(_)));
@@ -2365,11 +2564,11 @@ mod tests {
         };
         let (_, old_generation) = store.peer_for(&caller).expect("first binding admitted");
         assert!(matches!(store.configure(CoreSet::Peer(binding), || Ok(())), core_meta_capsule_nexus::Output::Configured(_)));
-        let stale = Arc::new(SubscriberQueue::new(1));
+        let stale = Arc::new(SubscriptionClosing::default());
         assert!(!store.register_peer_subscriber(&peer_id, old_generation, &stale));
         assert!(!stale.is_open());
         let (_, new_generation) = store.peer_for(&caller).expect("replacement binding admitted");
-        let current = Arc::new(SubscriberQueue::new(1));
+        let current = Arc::new(SubscriptionClosing::default());
         assert!(store.register_peer_subscriber(&peer_id, new_generation, &current));
         assert!(current.is_open());
     }
@@ -2400,7 +2599,7 @@ mod tests {
             process_id: identity.process_id,
         };
         let (_, old_generation) = store.peer_for(&caller).expect("first binding admitted");
-        let stale = Arc::new(SubscriberQueue::new(1));
+        let stale = Arc::new(SubscriptionClosing::default());
         let validated = Arc::new(Barrier::new(2));
         let release = Arc::new(Barrier::new(2));
 
@@ -2446,7 +2645,7 @@ mod tests {
         assert!(!stale.is_open(), "rebind closes the just-registered old generation");
 
         let (_, new_generation) = store.peer_for(&caller).expect("replacement binding admitted");
-        let current = Arc::new(SubscriberQueue::new(1));
+        let current = Arc::new(SubscriptionClosing::default());
         assert!(store.register_peer_subscriber(&peer_id, new_generation, &current));
         assert!(current.is_open(), "the current generation remains subscribed");
     }
@@ -2886,7 +3085,7 @@ mod tests {
     fn started_dispatcher(
         listings: Vec<emission_capsule_nexus::ExternalOutcome>,
     ) -> (
-        Arc<Dispatcher>,
+        Dispatcher,
         Arc<SubscriptionEmitter>,
         signal_capsule_nexus::Pane,
     ) {
@@ -2905,7 +3104,7 @@ mod tests {
             list_start_timeouts: std::sync::Mutex::new(Vec::new()),
             close_outcome: std::sync::Mutex::new(None),
         });
-        let dispatcher = Arc::new(Dispatcher::with_emitter(&test_paths(), emitter.clone()));
+        let dispatcher = Dispatcher::with_emitter(&test_paths(), emitter.clone());
         let configuration = test_configuration();
         let created = dispatcher.dispatch(
             Input::Create(Workspace {
@@ -2982,41 +3181,20 @@ mod tests {
     }
 
     #[test]
-    fn subscription_acks_then_reports_current_and_one_harness_loss() {
+    fn subscription_opens_on_the_live_panes_then_tells_one_harness_loss() {
         use emission_capsule_nexus::ExternalOutcome;
+        use signal_capsule_nexus::State;
         let (dispatcher, _emitter, pane) = started_dispatcher(vec![
             ExternalOutcome::Uncertain,
-            ExternalOutcome::Agents(vec![agent_listing(
-                &pane_for("subscription", "pane"),
-                signal_capsule_nexus::State::Open,
-            )]),
+            ExternalOutcome::Agents(vec![agent_listing(&pane_for("subscription", "pane"), State::Open)]),
         ]);
-        let (server, mut client) = std::os::unix::net::UnixStream::pair().expect("pair");
+        let mut client = dispatcher.subscribe(pane.session.clone(), test_configuration());
         client
             .set_read_timeout(Some(Duration::from_millis(250)))
             .expect("timeout");
-        dispatcher
-            .subscribe(server, pane.session.clone(), test_configuration())
-            .expect("subscribe");
-        assert!(
-            matches!(read_subscription(&mut client), capsule_nexus_wire::public_call::Output::Answered(ref output) if matches!(output.0, signal_capsule_nexus::Output::Subscribed(signal_capsule_nexus::Outcome::Done)))
-        );
-        assert!(
-            matches!(read_subscription(&mut client), capsule_nexus_wire::public_call::Output::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Output::Changed(change) if change.pane == pane && change.state == signal_capsule_nexus::State::Busy))
-        );
-        assert!(
-            matches!(read_subscription(&mut client), capsule_nexus_wire::public_call::Output::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Output::Changed(change) if change.pane == pane && change.state == signal_capsule_nexus::State::Dead))
-        );
-        client
-            .set_read_timeout(Some(Duration::from_millis(35)))
-            .expect("short timeout");
-        use signal::FrameReading;
-        assert!(
-            client
-                .read_frame(signal::FrameCapacity::from(4096))
-                .is_err(),
-            "repeated loss must not duplicate Dead"
-        );
+        assert_eq!(read_frame(&mut client), opened(vec![known(&pane, Some("flow"), State::Busy)]));
+        assert_eq!(read_frame(&mut client), changed(&pane, State::Dead));
+        assert_quiet(&mut client, 35, "repeated loss must not tell Dead twice");
     }
 
     fn pane_for(session: &str, pane: &str) -> signal_capsule_nexus::Pane {
@@ -3026,19 +3204,62 @@ mod tests {
         }
     }
 
+    type Frame = signal::Frame<signal_capsule_nexus::Panes, signal_capsule_nexus::Changed>;
+
+    fn known(
+        pane: &signal_capsule_nexus::Pane,
+        label: Option<&str>,
+        state: signal_capsule_nexus::State,
+    ) -> signal_capsule_nexus::Known {
+        signal_capsule_nexus::Known {
+            pane: pane.clone(),
+            label_option: label.map(|label| signal_capsule_nexus::Label(label.into())),
+            state,
+            attempt: signal_capsule_nexus::Attempt::Settled,
+        }
+    }
+
+    fn opened(panes: Vec<signal_capsule_nexus::Known>) -> Frame {
+        signal::Frame::Opened(signal_capsule_nexus::Panes(panes))
+    }
+
+    fn changed(pane: &signal_capsule_nexus::Pane, state: signal_capsule_nexus::State) -> Frame {
+        signal::Frame::Changed(signal_capsule_nexus::Changed {
+            pane: pane.clone(),
+            state,
+        })
+    }
+
+    /// The next frame of the subscription on the first exchange.
+    fn read_frame(stream: &mut std::os::unix::net::UnixStream) -> Frame {
+        match read_subscription(stream) {
+            capsule_nexus_wire::public_call::Output::Answered(output) => match output.0 {
+                signal_capsule_nexus::Output::Subscribed(frame) => frame,
+                other => panic!("a subscription answers with its frames, got {other:?}"),
+            },
+            other => panic!("a subscription is answered, got {other:?}"),
+        }
+    }
+
+    fn assert_quiet(stream: &mut std::os::unix::net::UnixStream, milliseconds: u64, why: &str) {
+        use signal::FrameReading;
+        stream
+            .set_read_timeout(Some(Duration::from_millis(milliseconds)))
+            .expect("short timeout");
+        assert!(stream.read_frame(signal::FrameCapacity::from(4096)).is_err(), "{why}");
+    }
+
     #[test]
     fn two_subscribers_share_one_session_poll_source() {
         let (dispatcher, emitter, pane) = started_dispatcher(Vec::new());
-        let (server_one, _client_one) = std::os::unix::net::UnixStream::pair().expect("pair one");
-        let (server_two, _client_two) = std::os::unix::net::UnixStream::pair().expect("pair two");
         let baseline = emitter.list_count.load(std::sync::atomic::Ordering::SeqCst);
         let started = std::time::Instant::now();
-        dispatcher
-            .subscribe(server_one, pane.session.clone(), test_configuration())
-            .expect("first");
-        dispatcher
-            .subscribe(server_two, pane.session.clone(), test_configuration())
-            .expect("second");
+        let mut first = dispatcher.subscribe(pane.session.clone(), test_configuration());
+        let mut second = dispatcher.subscribe(pane.session.clone(), test_configuration());
+        first.set_read_timeout(Some(Duration::from_millis(250))).expect("timeout");
+        second.set_read_timeout(Some(Duration::from_millis(250))).expect("timeout");
+        let _ = read_frame(&mut first);
+        let _ = read_frame(&mut second);
         assert_eq!(dispatcher.subscription_source_count(), 1);
         // Readiness: wait until the shared source has polled enough times to
         // show its cadence, within a deadline.
@@ -3051,9 +3272,9 @@ mod tests {
         }
         let elapsed = started.elapsed();
         assert!(polls >= wanted, "shared source did not poll, got {polls}");
-        // One source polls once per interval, plus its first immediate poll;
-        // two independent sources would poll about twice as often. The bound
-        // scales with the time actually elapsed, so load only loosens it.
+        // One source polls once per interval; two independent sources would
+        // poll about twice as often. The bound scales with the time actually
+        // elapsed, so load only loosens it.
         let interval = test_configuration().polling;
         let allowed = (elapsed.as_millis() / interval.as_millis()) as usize + 2;
         assert!(
@@ -3065,27 +3286,84 @@ mod tests {
 
     #[test]
     fn quiet_disconnected_subscriber_releases_its_shared_poll_source() {
-        let (dispatcher, _emitter, pane) = started_dispatcher(Vec::new());
-        let (server, client) = std::os::unix::net::UnixStream::pair().expect("pair");
-        dispatcher
-            .subscribe(server, pane.session.clone(), test_configuration())
-            .expect("subscribe");
+        let (dispatcher, emitter, pane) = started_dispatcher(Vec::new());
+        let mut client = dispatcher.subscribe(pane.session.clone(), test_configuration());
+        client.set_read_timeout(Some(Duration::from_millis(250))).expect("timeout");
+        let _ = read_frame(&mut client);
+        assert_eq!(dispatcher.subscription_source_count(), 1);
         drop(client);
         let deadline = std::time::Instant::now() + Duration::from_millis(250);
         while dispatcher.subscription_source_count() != 0 && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(dispatcher.subscription_source_count(), 0);
+        assert_eq!(dispatcher.subscription_source_count(), 0, "the last stream takes the Publisher");
+        // The feed ends with the Publisher: no observation follows it.
+        std::thread::sleep(test_configuration().polling * 3);
+        let after = emitter.list_count.load(std::sync::atomic::Ordering::SeqCst);
+        std::thread::sleep(test_configuration().polling * 5);
+        assert_eq!(
+            emitter.list_count.load(std::sync::atomic::Ordering::SeqCst),
+            after,
+            "no feed observes a session without a subscriber"
+        );
+    }
+
+    #[test]
+    fn each_change_arrives_once_and_in_order() {
+        use emission_capsule_nexus::ExternalOutcome;
+        use signal_capsule_nexus::State;
+        let pane = pane_for("subscription", "pane");
+        let (dispatcher, _emitter, _) = started_dispatcher(vec![
+            ExternalOutcome::Agents(vec![agent_listing(&pane, State::Idle)]),
+            ExternalOutcome::Agents(vec![agent_listing(&pane, State::Idle)]),
+            ExternalOutcome::Agents(vec![agent_listing(&pane, State::Busy)]),
+            ExternalOutcome::Agents(vec![agent_listing(&pane, State::Busy)]),
+            ExternalOutcome::Agents(vec![agent_listing(&pane, State::Idle)]),
+        ]);
+        let mut client = dispatcher.subscribe(pane.session.clone(), test_configuration());
+        client.set_read_timeout(Some(Duration::from_millis(250))).expect("timeout");
+        assert_eq!(read_frame(&mut client), opened(vec![known(&pane, Some("flow"), State::Busy)]));
+        for state in [State::Idle, State::Busy, State::Idle, State::Dead] {
+            assert_eq!(read_frame(&mut client), changed(&pane, state));
+        }
+        assert_quiet(&mut client, 35, "an unchanged observation tells nothing");
+    }
+
+    #[test]
+    fn a_non_owner_may_subscribe_and_observes_every_pane_of_the_session() {
+        use signal_capsule_nexus::{Input, Outcome, Output, State};
+        let (dispatcher, _emitter, pane) = started_dispatcher(Vec::new());
+        let stranger = shared_translator::UserId(i64::from(nix::unistd::getuid().as_raw()) + 4242);
+        let mut client = dispatcher.subscribe_as(
+            PublicAuthority::Translator,
+            stranger,
+            pane.session.clone(),
+            test_configuration(),
+        );
+        client.set_read_timeout(Some(Duration::from_millis(250))).expect("timeout");
+        assert_eq!(read_frame(&mut client), opened(vec![known(&pane, Some("flow"), State::Busy)]));
+        assert_eq!(
+            dispatcher
+                .dispatch_as(
+                    shared_translator::Principal::Login(stranger),
+                    Input::Close(pane.clone()),
+                    test_configuration(),
+                )
+                .answered()
+                .expect("Close is answered"),
+            Output::Closed(Outcome::Unknown(pane)),
+            "acting stays the owner's"
+        );
     }
 
     #[test]
     fn late_subscriber_cursor_does_not_repeat_its_current_state() {
         use emission_capsule_nexus::ExternalOutcome;
-        use signal_capsule_nexus::{AgentKind, AgentName, Command, Executable, Label, Program, Input, Start_Data};
+        use signal_capsule_nexus::{AgentKind, AgentName, Command, Executable, Label, Program, Input, Start_Data, State};
         let pane = pane_for("subscription", "pane");
         let (dispatcher, _emitter, _) = started_dispatcher(vec![
-            ExternalOutcome::Agents(vec![agent_listing(&pane, signal_capsule_nexus::State::Idle)]),
-            ExternalOutcome::Agents(vec![agent_listing(&pane, signal_capsule_nexus::State::Busy)]),
+            ExternalOutcome::Agents(vec![agent_listing(&pane, State::Idle)]),
+            ExternalOutcome::Agents(vec![agent_listing(&pane, State::Busy)]),
         ]);
         let slow = Arc::new(ReadyCoreConfiguration {
             polling: Duration::from_millis(100),
@@ -3095,12 +3373,10 @@ mod tests {
             subscriber_capacity: 8,
         });
         *dispatcher.configuration.current.write().expect("configuration") = Some(Arc::clone(&slow));
-        let (server_a, mut client_a) = std::os::unix::net::UnixStream::pair().expect("pair a");
+        let mut client_a = dispatcher.subscribe(pane.session.clone(), Arc::clone(&slow));
         client_a.set_read_timeout(Some(Duration::from_millis(300))).expect("timeout a");
-        dispatcher.subscribe(server_a, pane.session.clone(), Arc::clone(&slow)).expect("subscribe a");
-        let _ = read_subscription(&mut client_a); // acknowledgement
-        let _ = read_subscription(&mut client_a); // current Busy
-        assert!(matches!(read_subscription(&mut client_a), capsule_nexus_wire::public_call::Output::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Output::Changed(change) if change.state == signal_capsule_nexus::State::Idle)));
+        assert_eq!(read_frame(&mut client_a), opened(vec![known(&pane, Some("flow"), State::Busy)]));
+        assert_eq!(read_frame(&mut client_a), changed(&pane, State::Idle));
 
         let started = dispatcher.dispatch(Input::Start(Start_Data {
             pane: pane.clone(),
@@ -3113,22 +3389,17 @@ mod tests {
             label: Label("flow".into()),
         }), Arc::clone(&slow));
         assert!(matches!(started, signal_capsule_nexus::Output::Started(signal_capsule_nexus::Outcome::Done)));
-        let (server_b, mut client_b) = std::os::unix::net::UnixStream::pair().expect("pair b");
+        let mut client_b = dispatcher.subscribe(pane.session.clone(), Arc::clone(&slow));
         client_b.set_read_timeout(Some(Duration::from_millis(300))).expect("timeout b");
-        dispatcher.subscribe(server_b, pane.session.clone(), Arc::clone(&slow)).expect("subscribe b");
-        let _ = read_subscription(&mut client_b); // acknowledgement
-        assert!(matches!(read_subscription(&mut client_b), capsule_nexus_wire::public_call::Output::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Output::Changed(change) if change.state == signal_capsule_nexus::State::Busy)));
-        assert!(matches!(read_subscription(&mut client_a), capsule_nexus_wire::public_call::Output::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Output::Changed(change) if change.state == signal_capsule_nexus::State::Busy)));
-        client_b.set_read_timeout(Some(Duration::from_millis(35))).expect("short timeout b");
-        use signal::FrameReading;
-        assert!(client_b.read_frame(signal::FrameCapacity::from(4096)).is_err(), "late subscriber must not receive its current Busy twice");
+        assert_eq!(read_frame(&mut client_b), opened(vec![known(&pane, Some("flow"), State::Busy)]));
+        assert_eq!(read_frame(&mut client_a), changed(&pane, State::Busy));
+        assert_quiet(&mut client_b, 35, "late subscriber must not receive its current Busy twice");
     }
 
     #[test]
     fn active_subscription_reads_replaced_configuration() {
         let (dispatcher, emitter, pane) = started_dispatcher(Vec::new());
-        let (server, _client) = std::os::unix::net::UnixStream::pair().expect("pair");
-        dispatcher.subscribe(server, pane.session, test_configuration()).expect("subscribe");
+        let _client = dispatcher.subscribe(pane.session, test_configuration());
         while emitter.list_count.load(std::sync::atomic::Ordering::SeqCst) < 1 {
             std::thread::sleep(Duration::from_millis(2));
         }
@@ -3150,33 +3421,24 @@ mod tests {
     }
 
     #[test]
-    fn successful_close_delivers_one_dead_only_to_current_subscribers() {
-        use signal::FrameReading;
+    fn successful_close_tells_one_dead_and_a_later_opened_holds_no_dead_pane() {
         use signal_capsule_nexus::{Outcome, Input, Output, State};
         let (dispatcher, _emitter, pane) = started_dispatcher(Vec::new());
         let configuration = test_configuration();
-        let (server, mut client) = std::os::unix::net::UnixStream::pair().expect("pair");
+        let mut client = dispatcher.subscribe(pane.session.clone(), Arc::clone(&configuration));
         client.set_read_timeout(Some(Duration::from_millis(150))).expect("timeout");
-        dispatcher.subscribe(server, pane.session.clone(), Arc::clone(&configuration)).expect("subscribe");
-        let _ = read_subscription(&mut client);
-        let _ = read_subscription(&mut client);
+        assert_eq!(read_frame(&mut client), opened(vec![known(&pane, Some("flow"), State::Busy)]));
         assert!(matches!(
             dispatcher.dispatch(Input::Close(pane.clone()), Arc::clone(&configuration)),
             Output::Closed(Outcome::Done)
         ));
-        assert!(matches!(
-            read_subscription(&mut client),
-            capsule_nexus_wire::public_call::Output::Answered(ref output)
-                if matches!(&output.0, Output::Changed(change) if change.pane == pane && change.state == State::Dead)
-        ));
-        client.set_read_timeout(Some(Duration::from_millis(40))).expect("short timeout");
-        assert!(client.read_frame(signal::FrameCapacity::from(4096)).is_err());
+        assert_eq!(read_frame(&mut client), changed(&pane, State::Dead));
+        assert_quiet(&mut client, 40, "Dead is told once");
 
-        let (late_server, mut late_client) = std::os::unix::net::UnixStream::pair().expect("late pair");
-        late_client.set_read_timeout(Some(Duration::from_millis(40))).expect("late timeout");
-        dispatcher.subscribe(late_server, pane.session, configuration).expect("late subscribe");
-        let _ = read_subscription(&mut late_client);
-        assert!(late_client.read_frame(signal::FrameCapacity::from(4096)).is_err());
+        let mut late = dispatcher.subscribe(pane.session, configuration);
+        late.set_read_timeout(Some(Duration::from_millis(150))).expect("late timeout");
+        assert_eq!(read_frame(&mut late), opened(Vec::new()));
+        assert_quiet(&mut late, 40, "a late subscriber is told nothing of a closed pane");
     }
 
     #[test]
@@ -3194,25 +3456,17 @@ mod tests {
             }),
         );
         let configuration = test_configuration();
-        let (server, mut client) = std::os::unix::net::UnixStream::pair().expect("pair");
+        let mut client = dispatcher.subscribe(pane.session.clone(), Arc::clone(&configuration));
         client
             .set_read_timeout(Some(Duration::from_millis(150)))
             .expect("timeout");
-        dispatcher
-            .subscribe(server, pane.session.clone(), Arc::clone(&configuration))
-            .expect("subscribe");
-        let _ = read_subscription(&mut client);
-        let _ = read_subscription(&mut client);
+        let _ = read_frame(&mut client);
 
         assert!(matches!(
             dispatcher.dispatch(Input::Close(pane.clone()), Arc::clone(&configuration)),
             Output::Closed(Outcome::Done)
         ));
-        assert!(matches!(
-            read_subscription(&mut client),
-            capsule_nexus_wire::public_call::Output::Answered(ref output)
-                if matches!(&output.0, Output::Changed(change) if change.pane == pane && change.state == State::Dead)
-        ));
+        assert_eq!(read_frame(&mut client), changed(&pane, State::Dead));
         assert!(matches!(
             dispatcher.dispatch(Input::List(pane.session), configuration),
             Output::Listed(Outcome::Listed(ref known)) if known.is_empty()
@@ -3220,7 +3474,7 @@ mod tests {
     }
 
     #[test]
-    fn another_close_refusal_retains_ownership_and_publishes_no_dead() {
+    fn another_close_refusal_retains_ownership() {
         use emission_capsule_nexus::ExternalOutcome;
         use signal_capsule_nexus::{ErrorCode, Message, Outcome, Input, Refusal, Output};
         let (dispatcher, emitter, pane) = started_dispatcher(Vec::new());
@@ -3232,15 +3486,11 @@ mod tests {
             }),
         );
         let configuration = test_configuration();
-        let (server, mut client) = std::os::unix::net::UnixStream::pair().expect("pair");
+        let mut client = dispatcher.subscribe(pane.session.clone(), Arc::clone(&configuration));
         client
             .set_read_timeout(Some(Duration::from_millis(80)))
             .expect("timeout");
-        dispatcher
-            .subscribe(server, pane.session.clone(), Arc::clone(&configuration))
-            .expect("subscribe");
-        let _ = read_subscription(&mut client);
-        let _ = read_subscription(&mut client);
+        let _ = read_frame(&mut client);
 
         assert!(matches!(
             dispatcher.dispatch(Input::Close(pane.clone()), Arc::clone(&configuration)),
@@ -3254,7 +3504,6 @@ mod tests {
 
     #[test]
     fn stale_poll_finishing_after_close_cannot_reopen_the_pane() {
-        use signal::FrameReading;
         use signal_capsule_nexus::{
             AgentKind, AgentName, Command, Executable, Label, Outcome, Program, Input, Output,
             Root, Start_Data, State, Workspace,
@@ -3267,7 +3516,7 @@ mod tests {
             list_started: poll_started_tx,
             release_list: std::sync::Mutex::new(release_poll_rx),
         });
-        let dispatcher = Arc::new(Dispatcher::with_emitter(&test_paths(), emitter));
+        let dispatcher = Dispatcher::with_emitter(&test_paths(), emitter);
         let configuration = test_configuration();
         assert!(matches!(
             dispatcher.dispatch(
@@ -3297,30 +3546,62 @@ mod tests {
             Output::Started(Outcome::Done)
         ));
 
-        let (server, mut client) = std::os::unix::net::UnixStream::pair().expect("pair");
+        let mut client = dispatcher.subscribe(pane.session.clone(), Arc::clone(&configuration));
         client.set_read_timeout(Some(Duration::from_millis(250))).expect("timeout");
-        dispatcher
-            .subscribe(server, pane.session.clone(), Arc::clone(&configuration))
-            .expect("subscribe");
-        let _ = read_subscription(&mut client); // acknowledgement
-        let _ = read_subscription(&mut client); // current Busy
+        assert_eq!(read_frame(&mut client), opened(vec![known(&pane, Some("flow"), State::Busy)]));
         poll_started_rx.recv().expect("old poll reached external List");
 
         assert!(matches!(
             dispatcher.dispatch(Input::Close(pane.clone()), Arc::clone(&configuration)),
             Output::Closed(Outcome::Done)
         ));
-        assert!(matches!(
-            read_subscription(&mut client),
-            capsule_nexus_wire::public_call::Output::Answered(ref output)
-                if matches!(&output.0, Output::Changed(change) if change.pane == pane && change.state == State::Dead)
-        ));
+        assert_eq!(read_frame(&mut client), changed(&pane, State::Dead));
         release_poll_tx.send(()).expect("release stale poll");
+        assert_quiet(&mut client, 80, "the stale pre-Close List must not publish Open after terminal Dead");
+    }
 
-        client.set_read_timeout(Some(Duration::from_millis(80))).expect("short timeout");
+    #[test]
+    fn a_peer_rebind_withdraws_its_subscription_and_closes_its_connection() {
+        use core_meta_capsule_nexus::CoreSet;
+        use shared_translator::{PeerBinding, PeerId, PeerIdentity, ProcessId, UserId};
+        let (dispatcher, _emitter, pane) = started_dispatcher(Vec::new());
+        let identity = PeerIdentity {
+            user_id: UserId(i64::from(nix::unistd::getuid().as_raw())),
+            process_id: ProcessId(i64::from(std::process::id())),
+        };
+        let binding = PeerBinding {
+            peer_id: PeerId("observer".into()),
+            peer_identity: identity.clone(),
+        };
+        let configure = |binding: PeerBinding| {
+            assert!(matches!(
+                dispatcher.configuration.configure(CoreSet::Peer(binding), || Ok(())),
+                core_meta_capsule_nexus::Output::Configured(_)
+            ));
+        };
+        configure(binding.clone());
+        let (peer_id, generation) = dispatcher
+            .configuration
+            .peer_for(&shared_translator::Caller {
+                user_id: identity.user_id,
+                process_id: identity.process_id,
+            })
+            .expect("the peer is bound");
+        let mut client = dispatcher.subscribe_as(
+            PublicAuthority::Peer { peer_id, generation },
+            identity.user_id,
+            pane.session.clone(),
+            test_configuration(),
+        );
+        client.set_read_timeout(Some(Duration::from_millis(500))).expect("timeout");
+        let _ = read_frame(&mut client);
+        configure(binding);
+        let capacity = signal::FrameCapacity::from(4096);
         assert!(
-            client.read_frame(signal::FrameCapacity::from(4096)).is_err(),
-            "the stale pre-Close List must not publish Open after terminal Dead"
+            capsule_nexus_wire::exchange::read_frame_or_end(&mut client, capacity)
+                .expect("the end of the connection")
+                .is_none(),
+            "a withdrawn subscription closes its connection"
         );
     }
 
@@ -3344,9 +3625,12 @@ mod tests {
         let (dispatcher, _emitter, pane) = started_dispatcher(Vec::new());
         let (server, client) = std::os::unix::net::UnixStream::pair().expect("pair");
         let caller = capsule_nexus_wire::frame::peer_caller(&client).expect("caller");
-        let connection = PublicConnection::new(server, PublicAuthority::Translator).expect("connection");
-        let serving = Arc::clone(&dispatcher);
-        std::thread::spawn(move || connection.serve(&serving, &test_configuration()));
+        test_runtime().spawn(PublicConnection::serve(
+            server,
+            PublicAuthority::Translator,
+            dispatcher.clone(),
+            test_configuration(),
+        ));
         let mut querying = QueryingConnection::<Input, Output>::greeted(
             client,
             Patience::Progress(Duration::from_millis(500)),
@@ -3382,9 +3666,12 @@ mod tests {
         let (dispatcher, _emitter, _pane) = started_dispatcher(Vec::new());
         let (server, client) = std::os::unix::net::UnixStream::pair().expect("pair");
         let caller = capsule_nexus_wire::frame::peer_caller(&client).expect("caller");
-        let connection = PublicConnection::new(server, PublicAuthority::Translator).expect("connection");
-        let serving = Arc::clone(&dispatcher);
-        std::thread::spawn(move || connection.serve(&serving, &test_configuration()));
+        test_runtime().spawn(PublicConnection::serve(
+            server,
+            PublicAuthority::Translator,
+            dispatcher.clone(),
+            test_configuration(),
+        ));
         let capacity = signal::FrameCapacity::from(4096);
         capsule_nexus_wire::exchange::write_value(
             &client,
@@ -3408,55 +3695,6 @@ mod tests {
             .is_none());
     }
 
-    #[test]
-    fn a_lagged_or_withdrawn_subscription_closes_its_connection() {
-        use signal::{ExchangeTracking, Greeted};
-        for closing in [Closing::Lagged, Closing::Withdrawn] {
-            let (server, client) = std::os::unix::net::UnixStream::pair().expect("pair");
-            let connection = PublicConnection::new(server, PublicAuthority::Translator).expect("connection");
-            let exchange = signal::FIRST_EXCHANGE;
-            {
-                let mut ledger = connection.ledger.lock().expect("ledger");
-                ledger.greet().expect("greeted");
-                ledger.admit(exchange).expect("exchange admitted");
-            }
-            connection.conclude(exchange, closing);
-            let capacity = signal::FrameCapacity::from(4096);
-            let mut reading = client.try_clone().expect("reading");
-            reading.set_read_timeout(Some(Duration::from_millis(500))).expect("timeout");
-            assert!(capsule_nexus_wire::exchange::read_frame_or_end(&mut reading, capacity)
-                .expect("the end of the connection")
-                .is_none());
-        }
-    }
-
-    #[test]
-    fn bounded_subscriber_queue_disconnects_only_the_overflowing_peer() {
-        use signal_capsule_nexus::{Outcome, Output};
-        let slow = SubscriberQueue::new(1);
-        let healthy = SubscriberQueue::new(2);
-        assert!(slow.enqueue(Output::Subscribed(Outcome::Done)));
-        assert!(!slow.enqueue(Output::Subscribed(Outcome::Done)));
-        assert!(!slow.is_open());
-        assert!(healthy.enqueue(Output::Subscribed(Outcome::Done)));
-        assert!(healthy.is_open());
-    }
-
-    #[test]
-    fn lowering_subscriber_capacity_disconnects_only_queues_above_the_new_bound() {
-        use signal_capsule_nexus::{Outcome, Output};
-        let store = ConfigurationStore::default();
-        let over = Arc::new(SubscriberQueue::new(3));
-        let within = Arc::new(SubscriberQueue::new(3));
-        store.register_subscriber(&over);
-        store.register_subscriber(&within);
-        assert!(over.enqueue(Output::Subscribed(Outcome::Done)));
-        assert!(over.enqueue(Output::Subscribed(Outcome::Done)));
-        assert!(within.enqueue(Output::Subscribed(Outcome::Done)));
-        store.apply_subscriber_capacity(1);
-        assert!(!over.is_open());
-        assert!(within.is_open());
-    }
 }
     #[test]
     fn core_accepts_only_the_paired_translator_process() {

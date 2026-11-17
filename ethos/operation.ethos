@@ -6,13 +6,11 @@ Operation
   Prompting.{ Pane Text }
   Pressing.{ Pane Keys }
   Closing.Pane
-  Listing.Session
-  Subscribing.Session ]
+  Listing.Session ]
 [ Created.AttemptOutcome                                ; every attempt ends in the shared wire outcome
   Started.AttemptOutcome
   Prompted.AttemptOutcome
   Pressed.AttemptOutcome
   Closed.AttemptOutcome
-  Listed.AttemptOutcome
-  Subscribed.AttemptOutcome ]
+  Listed.AttemptOutcome ]
 []                                                      ; types

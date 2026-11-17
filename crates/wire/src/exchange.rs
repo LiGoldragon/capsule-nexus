@@ -10,7 +10,8 @@
 //! abandons the exchange or closes the connection.
 //!
 //! Framing is `signal`'s four-byte big-endian length prefix; this module adds
-//! only the two ways a blocking Unix stream waits for a frame.
+//! only the two ways a blocking Unix stream waits for a frame, and the same two
+//! for an asynchronous stream, on which the Nexus serves its public socket.
 
 use std::io::Read;
 use std::marker::PhantomData;
@@ -162,6 +163,87 @@ pub fn write_value<T: Signalizable>(
     let mut output = DeadlineStream::new(stream.try_clone()?, timeout)?;
     output.write_frame(&signal, capacity)?;
     Ok(())
+}
+
+/// Reads one whole Signal frame from an asynchronous exchange connection, as
+/// [`read_frame_after_idle`] reads one from a blocking stream: the wait for
+/// its first byte is unbounded and the rest of it has one absolute progress
+/// deadline. `None` is the peer closing between frames.
+pub async fn read_frame_after_idle_async<R: tokio::io::AsyncRead + Unpin>(
+    input: &mut R,
+    progress: Duration,
+    capacity: FrameCapacity,
+) -> Result<Option<FrameBody>, FrameError> {
+    use tokio::io::AsyncReadExt;
+    let mut first = 0_u8;
+    if input.read(std::slice::from_mut(&mut first)).await? == 0 {
+        return Ok(None);
+    }
+    tokio::time::timeout(progress, rest_of_frame_async(first, input, capacity))
+        .await
+        .map_err(|_| elapsed("frame progress deadline elapsed"))?
+        .map(Some)
+}
+
+/// Reads one whole Signal frame from an asynchronous connection, the whole of
+/// it within `deadline`. `None` is the peer closing before the frame began.
+pub async fn read_frame_within_async<R: tokio::io::AsyncRead + Unpin>(
+    input: &mut R,
+    deadline: Duration,
+    capacity: FrameCapacity,
+) -> Result<Option<FrameBody>, FrameError> {
+    use tokio::io::AsyncReadExt;
+    tokio::time::timeout(deadline, async {
+        let mut first = 0_u8;
+        if input.read(std::slice::from_mut(&mut first)).await? == 0 {
+            return Ok(None);
+        }
+        rest_of_frame_async(first, input, capacity).await.map(Some)
+    })
+    .await
+    .map_err(|_| elapsed("frame deadline elapsed"))?
+}
+
+async fn rest_of_frame_async<R: tokio::io::AsyncRead + Unpin>(
+    first: u8,
+    input: &mut R,
+    capacity: FrameCapacity,
+) -> Result<FrameBody, FrameError> {
+    use tokio::io::AsyncReadExt;
+    let mut prefix = [0_u8; FRAME_PREFIX_BYTES];
+    prefix[0] = first;
+    input.read_exact(&mut prefix[1..]).await?;
+    let length = capacity.admit(u32::from_be_bytes(prefix) as usize)?;
+    let mut body = vec![0_u8; length];
+    input.read_exact(&mut body).await?;
+    Ok(FrameBody::from(body))
+}
+
+/// Writes one value of the exchange layer as one frame to an asynchronous
+/// connection, the whole frame within `timeout`.
+pub async fn write_value_async<T: Signalizable, W: tokio::io::AsyncWrite + Unpin>(
+    output: &mut W,
+    value: &T,
+    timeout: Duration,
+    capacity: FrameCapacity,
+) -> Result<(), ExchangeError> {
+    use signal::Framable;
+    use tokio::io::AsyncWriteExt;
+    let framed = value
+        .signalize()
+        .map_err(|error| ExchangeError::Archive(format!("{error:?}")))?
+        .framed(capacity)?;
+    tokio::time::timeout(timeout, async {
+        output.write_all(&framed).await?;
+        output.flush().await
+    })
+    .await
+    .map_err(|_| elapsed("frame write deadline elapsed"))??;
+    Ok(())
+}
+
+fn elapsed(what: &'static str) -> FrameError {
+    FrameError::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, what))
 }
 
 /// How long the querying side waits on the Nexus.

@@ -36,7 +36,6 @@ pub enum Operation {
     Pressing(Pressing_Data),
     Closing(signal_capsule_nexus::Pane),
     Listing(signal_capsule_nexus::Session),
-    Subscribing(signal_capsule_nexus::Session),
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
@@ -48,5 +47,4 @@ pub enum Outcome {
     Pressed(signal_capsule_nexus::Outcome),
     Closed(signal_capsule_nexus::Outcome),
     Listed(signal_capsule_nexus::Outcome),
-    Subscribed(signal_capsule_nexus::Outcome),
 }

@@ -1,5 +1,47 @@
 # Upgrades
 
+## 0.5.0 — Subscribe is answered by a stream from a Publisher
+
+core, daemon, wire and the translator move to 0.5.0; core-meta and emission
+stay at 0.4.0.
+
+**Pins.** signal-capsule-nexus 2.0.0 (`49b4`), nexus 0.8.0 (`4765`), kameo
+0.22.2 and tokio 1.53.1; build-base `79c4` registers them. signal 11.2.0,
+translator 0.5.2 and meta-signal-capsule-nexus 1.0.1 stay.
+
+**The wire.** A Subscribe's answers on its exchange are the frames of
+`Subscribed.Stream<Panes Changed>`, each `Output::Subscribed(Frame)`:
+`Opened` with the panes the Capsule holds in the session that are not Dead,
+whoever owns them; each `Changed.{ Pane State }`; and `Lagged` with the panes
+anew for a subscriber more than the subscriber capacity behind, which goes on
+from them. There is no acknowledgement frame and no `Output::Changed`; a
+refused Subscribe is answered once, `SubscribeRefused.Outcome`. Nothing ends an
+exchange `Faulted.Lagged` any more.
+
+**Who may subscribe.** Any admitted caller: the subscription is one for the
+session, over every pane in it, whoever owns it. Acting on a pane stays its
+owner's.
+
+**The daemon.** The Capsule's state is owned by one Kameo actor, `Capsule`, on
+a tokio runtime the daemon starts; the public socket is served on that runtime,
+each exchange on a task, its attempt on the blocking pool. Each session with a
+subscriber has one `nexus::Publisher` in the Core, made at its first Subscribe
+and dropped with its last stream; the operation that changes Memory publishes
+the change when Memory answers `Succeeded`. The subscriber queues and writer
+threads are gone, and with them the per-subscriber change diffing: a
+subscription's task is woken by its stream or its closing. The List-timer feed
+stays, one per session while its Publisher lives, at the polling interval as
+before, and reaches the Publisher through Memory.
+
+**Operation.** `Subscribing` and `Subscribed` leave `ethos/operation.ethos`: a
+subscription opens on the Publisher and changes nothing in Memory.
+
+**Configuration.** `SubscriberCapacity` is the capacity a session's Publisher
+is made with; a Publisher already made keeps its capacity until it is dropped.
+
+To deploy: read each Subscribe answer as a frame of `Output::Subscribed`, and
+redeploy the daemon and translator together.
+
 ## 0.4.0 — the Nexus sockets speak signal's exchange layer
 
 All six packages move to 0.4.0. What a user sees is unchanged: the CLI, the

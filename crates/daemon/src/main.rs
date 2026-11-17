@@ -23,11 +23,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         admission,
         place.peer_identity,
     )?);
-    let dispatcher = Arc::new(capsule_nexus_daemon::Dispatcher::new(
+    // The public socket, its subscriptions and the actor that owns the
+    // Capsule's state run on this runtime; the meta socket and the accepting
+    // stay on threads of their own.
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let dispatcher = capsule_nexus_daemon::Dispatcher::new(
         bootstrap.paths(),
         bootstrap.configuration_store(),
         place.instance_id,
-    ));
+        runtime.handle().clone(),
+    );
 
     let meta = Arc::clone(&bootstrap);
     std::thread::spawn(move || loop {
@@ -47,12 +52,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let Some(configuration) = bootstrap.snapshot() else {
             continue;
         };
-        let dispatcher = Arc::clone(&dispatcher);
-        std::thread::spawn(move || {
-            match capsule_nexus_daemon::PublicConnection::new(accepted.stream, accepted.authority) {
-                Ok(connection) => connection.serve(&dispatcher, &configuration),
-                Err(error) => eprintln!("Capsule Nexus public connection failed: {error}"),
-            }
-        });
+        runtime.spawn(capsule_nexus_daemon::PublicConnection::serve(
+            accepted.stream,
+            accepted.authority,
+            dispatcher.clone(),
+            configuration,
+        ));
     }
 }
