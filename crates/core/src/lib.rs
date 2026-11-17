@@ -21,7 +21,19 @@ use signal_capsule_nexus::{
     Attempt, Command, CreationId, Keys, Known, Label, MemoryRefusal, ObservedEffect,
     Outcome, Pane, Panes, Refusal, Session, State, StorePhase, StoreRefusal, Text,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+/// The panes a listing may not reconcile because they changed after the
+/// listing was captured: Memory leaves each one's record as it stands, whole,
+/// and does not count it absent from the listing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Protected(pub HashSet<Pane>);
+
+impl Protected {
+    pub fn holds(&self, pane: &Pane) -> bool {
+        self.0.contains(pane)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExternalResult<T> {
@@ -36,11 +48,13 @@ pub trait Memory {
     fn owned_in_session(&self, session: &Session) -> Result<Vec<OwnedPane>, MemoryRefusal>;
     /// The session's panes as a listing reconciles them: each pane's Known
     /// after the reconciliation, its state as observed and its attempt
-    /// settled. [`Memory::reconcile_listing`] stores exactly these.
+    /// settled; a protected pane's Known is its record as it stands.
+    /// [`Memory::reconcile_listing`] stores exactly these.
     fn project_listing(
         &self,
         session: &Session,
         observed: &[PaneObservation],
+        protected: &Protected,
     ) -> Result<Vec<Known>, MemoryRefusal>;
     fn store_owned(&mut self, pane: OwnedPane) -> Answer;
     fn close_owned(&mut self, pane: &Pane) -> Answer;
@@ -49,6 +63,7 @@ pub trait Memory {
         &mut self,
         session: &Session,
         observed: &[PaneObservation],
+        protected: &Protected,
     ) -> Answer;
     fn pending(&self, creation_id: &CreationId) -> Result<Option<PendingCreation>, MemoryRefusal>;
     fn pending_in_session(&self, session: &Session) -> Result<Vec<PendingCreation>, MemoryRefusal>;
@@ -64,13 +79,21 @@ pub struct InMemory {
 }
 
 impl InMemory {
-    fn project_listing(&self, session: &Session, observed: &[PaneObservation]) -> Vec<Known> {
+    fn project_listing(
+        &self,
+        session: &Session,
+        observed: &[PaneObservation],
+        protected: &Protected,
+    ) -> Vec<Known> {
         let by_pane: HashMap<&Pane, &PaneObservation> =
             observed.iter().map(|seen| (&seen.pane, seen)).collect();
         self.panes
             .values()
             .filter(|owned| &owned.pane.session == session)
             .map(|owned| {
+                if protected.holds(&owned.pane) {
+                    return Known::from(owned);
+                }
                 Known {
                     pane: owned.pane.clone(),
                     label_option: owned.label_option.clone(),
@@ -101,8 +124,9 @@ impl Memory for InMemory {
         &self,
         session: &Session,
         observed: &[PaneObservation],
+        protected: &Protected,
     ) -> Result<Vec<Known>, MemoryRefusal> {
-        Ok(self.project_listing(session, observed))
+        Ok(self.project_listing(session, observed, protected))
     }
 
     fn store_owned(&mut self, pane: OwnedPane) -> Answer {
@@ -130,8 +154,12 @@ impl Memory for InMemory {
         &mut self,
         session: &Session,
         observed: &[PaneObservation],
+        protected: &Protected,
     ) -> Answer {
-        for known in self.project_listing(session, observed) {
+        for known in self.project_listing(session, observed, protected) {
+            if protected.holds(&known.pane) {
+                continue;
+            }
             if let Some(owned) = self.panes.get_mut(&known.pane) {
                 owned.state = known.state;
                 owned.attempt = known.attempt;
@@ -433,11 +461,12 @@ impl<M: Memory> Core<M> {
     pub fn list(
         &mut self,
         session: Session,
+        protected: Protected,
         external: ExternalResult<Vec<PaneObservation>>,
     ) -> Outcome {
         match external {
             ExternalResult::Succeeded(observed) => {
-                let projected = match self.memory.project_listing(&session, &observed) {
+                let projected = match self.memory.project_listing(&session, &observed, &protected) {
                     Ok(projected) => projected,
                     Err(refusal) => {
                         return store_refused(
@@ -458,7 +487,7 @@ impl<M: Memory> Core<M> {
                         )
                     }
                 };
-                match self.memory.reconcile_listing(&session, &observed) {
+                match self.memory.reconcile_listing(&session, &observed, &protected) {
                     Answer::Succeeded => {
                         for known in &projected {
                             self.publish(before.get(&known.pane), known.clone());
@@ -652,8 +681,13 @@ mod tests {
             }
         }
 
-        fn project_listing(&self, session: &Session, observed: &[PaneObservation]) -> Result<Vec<Known>, MemoryRefusal> {
-            Ok(self.memory.project_listing(session, observed))
+        fn project_listing(
+            &self,
+            session: &Session,
+            observed: &[PaneObservation],
+            protected: &Protected,
+        ) -> Result<Vec<Known>, MemoryRefusal> {
+            Ok(self.memory.project_listing(session, observed, protected))
         }
 
         fn store_owned(&mut self, pane: OwnedPane) -> Answer {
@@ -681,12 +715,13 @@ mod tests {
             &mut self,
             session: &Session,
             observed: &[PaneObservation],
+            protected: &Protected,
         ) -> Answer {
             if self.next.get() == Some(Call::ReconcileListing) {
                 self.next.set(None);
                 return Answer::Failed(MemoryRefusal(Message("selected test refusal".into())));
             }
-            self.memory.reconcile_listing(session, observed)
+            self.memory.reconcile_listing(session, observed, protected)
         }
 
         fn pending(&self, creation_id: &CreationId) -> Result<Option<PendingCreation>, MemoryRefusal> {
@@ -898,7 +933,7 @@ mod tests {
     #[test]
     fn absence_becomes_dead_only_on_complete_successful_listing() {
         let mut core = Core::new(seeded());
-        let outcome = core.list(Session("v1".into()), ExternalResult::Succeeded(vec![]));
+        let outcome = core.list(Session("v1".into()), Protected::default(), ExternalResult::Succeeded(vec![]));
         assert_eq!(
             outcome,
             Outcome::Listed(vec![Known {
@@ -976,9 +1011,9 @@ mod tests {
         let Subscription { mut stream, .. } = core
             .subscribe(&pane().session, Capacity(8))
             .expect("Memory gives the panes");
-        assert!(matches!(core.list(pane().session, observed(State::Busy)), Outcome::Listed(_)));
-        assert!(matches!(core.list(pane().session, observed(State::Busy)), Outcome::Listed(_)));
-        assert!(matches!(core.list(pane().session, observed(State::Idle)), Outcome::Listed(_)));
+        assert!(matches!(core.list(pane().session, Protected::default(), observed(State::Busy)), Outcome::Listed(_)));
+        assert!(matches!(core.list(pane().session, Protected::default(), observed(State::Busy)), Outcome::Listed(_)));
+        assert!(matches!(core.list(pane().session, Protected::default(), observed(State::Idle)), Outcome::Listed(_)));
         assert_eq!(core.close(pane(), ExternalResult::Succeeded(())), Outcome::Done);
         assert_eq!(stream.next().await, Some(signal::Frame::Opened(panes_of(State::Open))));
         assert_eq!(stream.next().await, Some(frame_of(State::Busy)));
@@ -1001,7 +1036,7 @@ mod tests {
         let Subscription { mut stream, .. } = core
             .subscribe(&pane().session, Capacity(8))
             .expect("Memory gives the panes");
-        let outcome = core.list(pane().session, observed(State::Open));
+        let outcome = core.list(pane().session, Protected::default(), observed(State::Open));
         assert_eq!(outcome, Outcome::Listed(vec![known_of(State::Open)]));
         assert_eq!(stream.next().await, Some(signal::Frame::Opened(Panes(vec![Known {
             attempt: Attempt::Uncertain,
@@ -1020,11 +1055,11 @@ mod tests {
             .subscribe(&pane().session, Capacity(1))
             .expect("Memory gives the panes");
         for state in [State::Busy, State::Idle, State::Busy] {
-            assert!(matches!(core.list(pane().session, observed(state)), Outcome::Listed(_)));
+            assert!(matches!(core.list(pane().session, Protected::default(), observed(state)), Outcome::Listed(_)));
         }
         assert_eq!(stream.next().await, Some(signal::Frame::Opened(panes_of(State::Open))));
         assert_eq!(stream.next().await, Some(signal::Frame::Lagged(panes_of(State::Busy))));
-        assert!(matches!(core.list(pane().session, observed(State::Idle)), Outcome::Listed(_)));
+        assert!(matches!(core.list(pane().session, Protected::default(), observed(State::Idle)), Outcome::Listed(_)));
         assert_eq!(stream.next().await, Some(frame_of(State::Idle)));
     }
 
@@ -1036,7 +1071,7 @@ mod tests {
             .subscribe(&pane().session, Capacity(8))
             .expect("Memory gives the panes");
         assert!(matches!(core.close(pane(), ExternalResult::Succeeded(())), Outcome::StoreRefused(_)));
-        assert!(matches!(core.list(pane().session, observed(State::Idle)), Outcome::Listed(_)));
+        assert!(matches!(core.list(pane().session, Protected::default(), observed(State::Idle)), Outcome::Listed(_)));
         assert_eq!(stream.next().await, Some(signal::Frame::Opened(panes_of(State::Open))));
         assert_eq!(stream.next().await, Some(frame_of(State::Idle)));
     }
@@ -1074,7 +1109,7 @@ mod tests {
             .expect("Memory gives the panes");
         assert_eq!(core.prompt(pane(), Text("hello".into()), ExternalResult::Uncertain), Outcome::Uncertain);
         assert_eq!(core.prompt(pane(), Text("hello".into()), ExternalResult::Uncertain), Outcome::Uncertain);
-        assert!(matches!(core.list(pane().session, observed(State::Open)), Outcome::Listed(_)));
+        assert!(matches!(core.list(pane().session, Protected::default(), observed(State::Open)), Outcome::Listed(_)));
         assert_eq!(stream.next().await, Some(signal::Frame::Opened(panes_of(State::Open))));
         assert_eq!(
             stream.next().await,
@@ -1099,12 +1134,12 @@ mod tests {
         let other = Session("other".into());
         let _third = core.subscribe(&other, Capacity(8)).expect("an empty session subscribes");
         for state in [State::Busy, State::Idle] {
-            assert!(matches!(core.list(pane().session, observed(state)), Outcome::Listed(_)));
+            assert!(matches!(core.list(pane().session, Protected::default(), observed(state)), Outcome::Listed(_)));
         }
         assert_eq!(core.resize(Capacity(1)), Reached(3));
         assert_eq!(stream.next().await, Some(signal::Frame::Opened(panes_of(State::Open))));
         assert_eq!(stream.next().await, Some(signal::Frame::Lagged(panes_of(State::Idle))));
-        assert!(matches!(core.list(pane().session, observed(State::Busy)), Outcome::Listed(_)));
+        assert!(matches!(core.list(pane().session, Protected::default(), observed(State::Busy)), Outcome::Listed(_)));
         assert_eq!(stream.next().await, Some(frame_of(State::Busy)));
     }
 
@@ -1122,5 +1157,41 @@ mod tests {
         core.unsubscribe(&pane().session);
         assert_eq!(core.publication_count(), 0);
         assert_eq!(feed.try_recv(), Ok(()), "the last stream ends the feed");
+    }
+
+    #[tokio::test]
+    async fn a_protected_pane_passes_through_a_listing_whole_and_publishes_nothing() {
+        use futures_util::StreamExt;
+        let mut memory = seeded();
+        let uncertain = Pane {
+            session: pane().session,
+            pane_id: PaneId("prompted".into()),
+        };
+        memory.store_owned(OwnedPane {
+            pane: uncertain.clone(),
+            workspace: workspace(),
+            label_option: None,
+            state: State::Busy,
+            attempt: Attempt::Uncertain,
+        });
+        let mut core = Core::new(memory);
+        let Subscription { mut stream, .. } =
+            core.subscribe(&pane().session, Capacity(8)).expect("subscribes");
+        assert!(matches!(stream.next().await, Some(signal::Frame::Opened(_))));
+        let protected = Protected(HashSet::from([uncertain.clone()]));
+        // The protected pane is absent from the listing, and is not counted dead.
+        let outcome = core.list(pane().session, protected.clone(), observed(State::Busy));
+        let Outcome::Listed(known) = outcome else { panic!("listed") };
+        let kept = known.iter().find(|known| known.pane == uncertain).expect("listed");
+        assert_eq!((kept.state.clone(), kept.attempt.clone()), (State::Busy, Attempt::Uncertain));
+        let stored = core.memory().owned(&uncertain).unwrap().expect("owned");
+        assert_eq!((stored.state, stored.attempt), (State::Busy, Attempt::Uncertain));
+        // Only the reconciled pane moved; the protected one published nothing.
+        assert_eq!(stream.next().await, Some(frame_of(State::Busy)));
+        assert!(matches!(
+            core.list(pane().session, protected, observed(State::Idle)),
+            Outcome::Listed(_)
+        ));
+        assert_eq!(stream.next().await, Some(frame_of(State::Idle)));
     }
 }

@@ -888,8 +888,8 @@ impl Capsule {
         if let Some((panes, workspaces)) = &adoption {
             adopt_pending_creations(self, &pending, panes, workspaces);
         }
-        let external = protect_newer_state(self, &session, &captured, external);
-        let outcome = self.core.list(session.clone(), external);
+        let protected = protect_newer_state(self, &session, &captured);
+        let outcome = self.core.list(session.clone(), protected, external);
         if matches!(outcome, signal_capsule_nexus::Outcome::Listed(_)) {
             if let Ok(owned) = self.core.owned_in_session(&session) {
                 for owned in owned {
@@ -1649,26 +1649,20 @@ fn protect_newer_state(
     state: &Capsule,
     session: &signal_capsule_nexus::Session,
     captured: &std::collections::HashMap<signal_capsule_nexus::Pane, u64>,
-    external: capsule_nexus_core::ExternalResult<Vec<emission_capsule_nexus::PaneObservation>>,
-) -> capsule_nexus_core::ExternalResult<Vec<emission_capsule_nexus::PaneObservation>> {
-    let capsule_nexus_core::ExternalResult::Succeeded(mut observed) = external else {
-        return external;
-    };
+) -> capsule_nexus_core::Protected {
     let Ok(owned) = state.core.owned_in_session(session) else {
-        return capsule_nexus_core::ExternalResult::Succeeded(observed);
+        return capsule_nexus_core::Protected::default();
     };
-    for current in owned {
-        let changed = captured.get(&current.pane) != state.revisions.get(&current.pane)
-            || state.reserved.contains_key(&current.pane);
-        if changed {
-            observed.retain(|item| item.pane != current.pane);
-            observed.push(emission_capsule_nexus::PaneObservation {
-                pane: current.pane,
-                state: current.state,
-            });
-        }
-    }
-    capsule_nexus_core::ExternalResult::Succeeded(observed)
+    capsule_nexus_core::Protected(
+        owned
+            .into_iter()
+            .filter(|current| {
+                captured.get(&current.pane) != state.revisions.get(&current.pane)
+                    || state.reserved.contains_key(&current.pane)
+            })
+            .map(|current| current.pane)
+            .collect(),
+    )
 }
 
 fn filter_listing(
