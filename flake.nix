@@ -118,11 +118,11 @@
               memory-generated = { name = "memory"; declaration = ./ethos/memory.ethos; committed = ./crates/core/src/generated/memory.rs; };
               emission-generated = { name = "emission"; declaration = ./crates/emission/ethos/emission.ethos; committed = ./crates/emission/src/generated/emission.rs; };
               argument-generated = { name = "argument"; declaration = ./ethos/argument.ethos; committed = ./crates/translator/src/generated/argument.rs; };
-              transport-generated = { name = "transport"; declaration = ./ethos/transport.ethos; committed = ./crates/wire/src/transport_types.rs; normalization = "transport"; };
-              public-call-generated = { name = "public-call"; declaration = ./ethos/public-call.ethos; committed = ./crates/wire/src/public_call.rs; normalization = "public-call"; };
-              public-payload-generated = { name = "public-payload"; declaration = ./ethos/public-payload.ethos; committed = ./crates/wire/src/public_payload.rs; };
-              meta-call-generated = { name = "meta-call"; declaration = ./ethos/meta-call.ethos; committed = ./crates/wire/src/meta_call.rs; normalization = "meta-call"; };
-              meta-payload-generated = { name = "meta-payload"; declaration = ./ethos/meta-payload.ethos; committed = ./crates/wire/src/meta_payload.rs; };
+              transport-generated = { name = "transport"; declaration = ./crates/wire/ethos/transport.ethos; committed = ./crates/wire/src/transport_types.rs; normalization = "transport"; };
+              public-call-generated = { name = "public-call"; declaration = ./crates/wire/ethos/public-call.ethos; committed = ./crates/wire/src/public_call.rs; normalization = "public-call"; };
+              public-payload-generated = { name = "public-payload"; declaration = ./crates/wire/ethos/public-payload.ethos; committed = ./crates/wire/src/public_payload.rs; };
+              meta-call-generated = { name = "meta-call"; declaration = ./crates/wire/ethos/meta-call.ethos; committed = ./crates/wire/src/meta_call.rs; normalization = "meta-call"; };
+              meta-payload-generated = { name = "meta-payload"; declaration = ./crates/wire/ethos/meta-payload.ethos; committed = ./crates/wire/src/meta_payload.rs; };
               core-meta-generated = { name = "core-meta"; declaration = ./crates/core-meta/ethos/core-meta.ethos; committed = ./crates/core-meta/src/lib.rs; normalization = "core-meta"; };
             };
             checked = lib.mapAttrs (_: contract) contracts;

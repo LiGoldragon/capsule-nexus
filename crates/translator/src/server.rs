@@ -1,4 +1,5 @@
 use crate::runner::{self, Captured};
+use capsule_nexus_wire::exchange::{Patience, QueryingConnection};
 use crate::generated::argument::{Arguable, ListArgument, PaneCloseArgument};
 use emission_capsule_nexus::{
     AgentListing, AgentPrompt_Data, AgentStart_Data, ExternalOutcome, Herdr, SendKeys_Data,
@@ -582,31 +583,46 @@ fn public_binary_call<Q, R>(
     frame_capacity: usize,
 ) -> Result<R, ServerError>
 where
-    Q: signal::Signalizable,
+    Q: signal::Contracted,
+    signal::Dispatch<Q>: signal::Signalizable,
     R: rkyv::Archive,
-    Signal<R>: shared_translator::Restorable<R>,
+    Signal<signal::Delivery<R>>: shared_translator::Restorable<signal::Delivery<R>>,
 {
-    use shared_translator::FrameWriting;
     let stream = UnixStream::connect(path).map_err(ServerError::Io)?;
-    let mut output = capsule_nexus_wire::deadline::DeadlineStream::new(
-        stream.try_clone().map_err(ServerError::Io)?,
-        timeout,
+    let mut connection = QueryingConnection::<Q, R>::greeted(
+        stream,
+        Patience::Progress(timeout),
+        FrameCapacity::from(frame_capacity),
     )
-    .map_err(ServerError::Io)?;
-    let request = query
-        .signalize()
-        .map_err(|error| ServerError::Signal(format!("{error:?}")))?;
-    let capacity = FrameCapacity::from(frame_capacity);
-    output
-        .write_frame(&request, capacity)
-        .map_err(ServerError::Frame)?;
-    let response = read_subscription_signal_frame(stream, timeout, frame_capacity)?
-        .ok_or_else(|| ServerError::Signal("Nexus closed without an answer".into()))?;
-    Signal::<R>::from(response)
-        .restore()
-        .map_err(|error| ServerError::Signal(format!("{error:?}")))
+    .map_err(ServerError::from)?;
+    let exchange = connection.open(query).map_err(ServerError::from)?;
+    only_answer(&mut connection, exchange)
 }
 
+/// The one answer of a one-answer exchange.
+fn only_answer<Q, R>(
+    connection: &mut QueryingConnection<Q, R>,
+    exchange: signal::ExchangeId,
+) -> Result<R, ServerError>
+where
+    Q: signal::Contracted,
+    signal::Dispatch<Q>: signal::Signalizable,
+    R: rkyv::Archive,
+    Signal<signal::Delivery<R>>: shared_translator::Restorable<signal::Delivery<R>>,
+{
+    match connection.delivery().map_err(ServerError::from)? {
+        Some(signal::Delivery::Answer(answer)) if answer.exchange == exchange => Ok(answer.response),
+        Some(signal::Delivery::End(ending)) => Err(ServerError::Signal(format!(
+            "Nexus ended the exchange without an answer: {:?}",
+            ending.conclusion
+        ))),
+        Some(_) => Err(ServerError::Signal("Nexus answered another exchange".into())),
+        None => Err(ServerError::Signal("Nexus closed without an answer".into())),
+    }
+}
+
+/// Forwards a Subscribe: each answer on its exchange goes to the client as
+/// one text frame, until the Nexus ends the exchange or closes.
 fn forward_public_stream(
     client: &UnixStream,
     place: &Place,
@@ -615,7 +631,6 @@ fn forward_public_stream(
     progress_timeout: Duration,
     admission_limit: usize,
 ) -> Result<(), ServerError> {
-    use shared_translator::FrameWriting;
     let request =
         capsule_nexus_wire::public_call::Input::Call(capsule_nexus_wire::public_call::Call_Data {
             caller,
@@ -625,29 +640,24 @@ fn forward_public_stream(
         shared_translator::placement::runtime_path(place)
             .join(capsule_nexus_wire::socket_names().public_nexus_socket.0),
     )
-        .map_err(ServerError::Io)?;
-    let mut core_write = capsule_nexus_wire::deadline::DeadlineStream::new(
-        core.try_clone().map_err(ServerError::Io)?,
-        progress_timeout,
-    )
     .map_err(ServerError::Io)?;
-    let request = request
-        .signalize()
-        .map_err(|error| ServerError::Signal(format!("{error:?}")))?;
-    core_write
-        .write_frame(&request, FrameCapacity::from(admission_limit))
-        .map_err(ServerError::Frame)?;
+    let mut connection = QueryingConnection::<
+        capsule_nexus_wire::public_call::Input,
+        capsule_nexus_wire::public_call::Output,
+    >::greeted(
+        core,
+        Patience::Progress(progress_timeout),
+        FrameCapacity::from(admission_limit),
+    )
+    .map_err(ServerError::from)?;
+    let exchange = connection.open(request).map_err(ServerError::from)?;
     loop {
-        let Some(body) = read_subscription_signal_frame(
-            core.try_clone().map_err(ServerError::Io)?,
-            progress_timeout,
-            admission_limit,
-        )? else {
-            return Ok(());
+        let response = match connection.delivery().map_err(ServerError::from)? {
+            Some(signal::Delivery::Answer(answer)) if answer.exchange == exchange => answer.response,
+            Some(signal::Delivery::End(ending)) if ending.exchange == exchange => return Ok(()),
+            Some(_) => return Err(ServerError::Signal("Nexus answered another exchange".into())),
+            None => return Ok(()),
         };
-        let response = Signal::<capsule_nexus_wire::public_call::Output>::from(body)
-            .restore()
-            .map_err(|error| ServerError::Signal(format!("{error:?}")))?;
         let response = match response {
             capsule_nexus_wire::public_call::Output::Answered(output) => output.0,
             capsule_nexus_wire::public_call::Output::Failed(message) => {
@@ -667,42 +677,6 @@ fn forward_public_stream(
         crate::transport::write_frame(&mut client_write, &frame, admission_limit)
             .map_err(ServerError::Transport)?;
     }
-}
-
-/// A subscription may remain quiet for its whole useful lifetime.  The first
-/// byte therefore has no idle deadline.  Once a frame starts, the remaining
-/// prefix and body share one absolute deadline, so a partial or drip-fed frame
-/// cannot retain the connection indefinitely.
-fn read_subscription_signal_frame(
-    mut stream: UnixStream,
-    progress_timeout: Duration,
-    capacity: usize,
-) -> Result<Option<Vec<u8>>, ServerError> {
-    use std::io::Read;
-
-    stream.set_read_timeout(None).map_err(ServerError::Io)?;
-    let mut prefix = [0_u8; 4];
-    match stream.read(&mut prefix[..1]) {
-        Ok(0) => return Ok(None),
-        Ok(1) => {}
-        Ok(_) => return Err(ServerError::Signal("subscription prefix read exceeded its one-byte buffer".into())),
-        Err(error) => return Err(ServerError::Io(error)),
-    }
-    let mut progressing = capsule_nexus_wire::deadline::DeadlineStream::new(stream, progress_timeout)
-        .map_err(ServerError::Io)?;
-    progressing
-        .read_exact(&mut prefix[1..])
-        .map_err(ServerError::Io)?;
-    let length = usize::try_from(u32::from_be_bytes(prefix))
-        .map_err(|_| ServerError::Signal("subscription frame length is not representable".into()))?;
-    if length > capacity {
-        return Err(ServerError::Signal(format!(
-            "subscription frame length {length} exceeds capacity {capacity}"
-        )));
-    }
-    let mut body = vec![0_u8; length];
-    progressing.read_exact(&mut body).map_err(ServerError::Io)?;
-    Ok(Some(body))
 }
 
 fn forward_meta(
@@ -764,6 +738,8 @@ fn public_setting(setting: core_meta_capsule_nexus::CoreSet) -> meta_signal_caps
     }
 }
 
+/// A meta call: the greeting, the exchange and its answer all within one
+/// absolute deadline.
 fn binary_call<Q, R>(
     path: PathBuf,
     query: Q,
@@ -771,25 +747,23 @@ fn binary_call<Q, R>(
     frame_capacity: usize,
 ) -> Result<R, ServerError>
 where
-    Q: signal::Signalizable,
+    Q: signal::Contracted,
+    signal::Dispatch<Q>: signal::Signalizable,
     R: rkyv::Archive,
-    Signal<R>: shared_translator::Restorable<R>,
+    Signal<signal::Delivery<R>>: shared_translator::Restorable<signal::Delivery<R>>,
 {
-    use shared_translator::{FrameReading, FrameWriting};
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| ServerError::Signal("meta call deadline overflow".into()))?;
     let stream = UnixStream::connect(path).map_err(ServerError::Io)?;
-    let mut stream = capsule_nexus_wire::deadline::DeadlineStream::new(stream, timeout)
-        .map_err(ServerError::Io)?;
-    let request = query
-        .signalize()
-        .map_err(|error| ServerError::Signal(format!("{error:?}")))?;
-    let capacity = FrameCapacity::from(frame_capacity);
-    stream
-        .write_frame(&request, capacity)
-        .map_err(ServerError::Frame)?;
-    let response = stream.read_frame(capacity).map_err(ServerError::Frame)?;
-    Signal::<R>::from(Vec::from(response))
-        .restore()
-        .map_err(|error| ServerError::Signal(format!("{error:?}")))
+    let mut connection = QueryingConnection::<Q, R>::greeted(
+        stream,
+        Patience::Until(deadline),
+        FrameCapacity::from(frame_capacity),
+    )
+    .map_err(ServerError::from)?;
+    let exchange = connection.open(query).map_err(ServerError::from)?;
+    only_answer(&mut connection, exchange)
 }
 
 fn setting_name(setting: &meta_signal_capsule_nexus::Set) -> meta_signal_capsule_nexus::SettingName {
@@ -1405,6 +1379,17 @@ impl std::fmt::Display for ServerError {
 
 impl std::error::Error for ServerError {}
 
+impl From<capsule_nexus_wire::exchange::ExchangeError> for ServerError {
+    fn from(error: capsule_nexus_wire::exchange::ExchangeError) -> Self {
+        use capsule_nexus_wire::exchange::ExchangeError;
+        match error {
+            ExchangeError::Frame(shared_translator::FrameError::Io(error)) => Self::Io(error),
+            ExchangeError::Frame(error) => Self::Frame(error),
+            other => Self::Signal(other.to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     const MAXIMUM_SIGNAL_BYTES: usize = signal::MAXIMUM_SIGNAL_BYTES;
@@ -1692,45 +1677,6 @@ mod tests {
     }
 
     #[test]
-    fn subscription_frame_may_be_quiet_beyond_call_timeout() {
-        use std::io::Write;
-        let (mut writer, reader) = UnixStream::pair().expect("socket pair");
-        let reading = std::thread::spawn(move || {
-            read_subscription_signal_frame(reader, Duration::from_millis(30), 32)
-        });
-        std::thread::sleep(Duration::from_millis(75));
-        writer.write_all(&3_u32.to_be_bytes()).expect("prefix");
-        writer.write_all(b"new").expect("body");
-        assert_eq!(
-            reading.join().expect("reader thread").expect("frame"),
-            Some(b"new".to_vec())
-        );
-    }
-
-    #[test]
-    fn subscription_partial_frame_has_one_absolute_progress_deadline() {
-        use std::io::Write;
-        let (mut writer, reader) = UnixStream::pair().expect("socket pair");
-        writer.write_all(&[0]).expect("first prefix byte");
-        let started = Instant::now();
-        let failure = read_subscription_signal_frame(reader, Duration::from_millis(30), 32)
-            .expect_err("partial frame must time out");
-        assert!(started.elapsed() < Duration::from_millis(250));
-        assert!(matches!(failure, ServerError::Io(_)));
-    }
-
-    #[test]
-    fn subscription_peer_shutdown_ends_the_stream() {
-        let (writer, reader) = UnixStream::pair().expect("socket pair");
-        drop(writer);
-        assert_eq!(
-            read_subscription_signal_frame(reader, Duration::from_millis(30), 32)
-                .expect("clean shutdown"),
-            None
-        );
-    }
-
-    #[test]
     fn actual_text_front_start_outlives_generic_call_timeout() {
         use meta_signal_capsule_nexus::{
             BudgetValue, ByteLimit, DepthLimit, NodeLimit, PathValue, Set, Timeout,
@@ -1753,28 +1699,50 @@ mod tests {
         let front_listener = UnixListener::bind(&front_path).expect("front fixture socket");
 
         let core = std::thread::spawn(move || {
+            use capsule_nexus_wire::public_call::{Input, Output};
+            use signal::{Answer, Contracted, Delivery, Dispatch};
             let (mut stream, _) = core_listener.accept().expect("core connection");
-            let body = stream
-                .read_frame(FrameCapacity::from(MAXIMUM_SIGNAL_BYTES))
-                .expect("typed public Call");
-            let call = Signal::<capsule_nexus_wire::public_call::Input>::from(Vec::from(body))
-                .restore()
-                .expect("restore public Call");
+            let capacity = FrameCapacity::from(MAXIMUM_SIGNAL_BYTES);
+            let greeting = Signal::<Dispatch<Input>>::from(Vec::from(
+                stream.read_frame(capacity).expect("greeting"),
+            ))
+            .restore()
+            .expect("restore greeting");
+            let Dispatch::Greet(greeting) = greeting else {
+                panic!("the translator greets first");
+            };
+            stream
+                .write_frame(
+                    &Delivery::<Output>::Greeted(Input::receipt(&greeting))
+                        .signalize()
+                        .expect("receipt signal"),
+                    capacity,
+                )
+                .expect("receipt");
+            let opened = Signal::<Dispatch<Input>>::from(Vec::from(
+                stream.read_frame(capacity).expect("typed public Call"),
+            ))
+            .restore()
+            .expect("restore public Call");
+            let Dispatch::Open(opening) = opened else {
+                panic!("the translator opens an exchange");
+            };
             assert!(matches!(
-                call,
-                capsule_nexus_wire::public_call::Input::Call(ref data)
+                opening.query,
+                Input::Call(ref data)
                     if matches!(data.public_input.0, signal_capsule_nexus::Input::Start(_))
             ));
             std::thread::sleep(Duration::from_millis(75));
-            let response = capsule_nexus_wire::public_call::Output::Answered(
-                capsule_nexus_wire::public_payload::Output(
+            let response = Delivery::Answer(Answer {
+                exchange: opening.exchange,
+                response: Output::Answered(capsule_nexus_wire::public_payload::Output(
                     signal_capsule_nexus::Output::Started(signal_capsule_nexus::Outcome::Done),
-                ),
-            )
+                )),
+            })
             .signalize()
             .expect("response signal");
             stream
-                .write_frame(&response, FrameCapacity::from(MAXIMUM_SIGNAL_BYTES))
+                .write_frame(&response, capacity)
                 .expect("delayed response");
         });
 

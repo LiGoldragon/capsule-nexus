@@ -1,5 +1,49 @@
 # Upgrades
 
+## 0.4.0 — the Nexus sockets speak signal's exchange layer
+
+All six packages move to 0.4.0. What a user sees is unchanged: the CLI, the
+translator's text and emission lanes and every Datom text are as they were.
+
+**Pins.** signal 11.2.0 (`4f5c`), translator 0.5.2 (`2960`),
+signal-capsule-nexus 1.0.1 (`d57c`) and meta-signal-capsule-nexus 1.0.1
+(`76b4`), each only following signal; build-base `982f` registers them.
+
+**The wire of both Nexus sockets.** A frame was one bare archive, one Call in
+and its Output back, one call per connection, a subscription's Outputs following
+until the connection closed. A frame is now one archive of the exchange layer:
+
+- the querying side sends `signal::Dispatch<public_call::Input>` on the public
+  socket and `signal::Dispatch<meta_call::Input>` on the meta socket: first
+  `Greet` with the call contract's digest, then `Open` with an exchange
+  identifier and the Call with its Caller, and `Abandon` to give one up;
+- the Nexus sends `signal::Delivery<public_call::Output>` or
+  `signal::Delivery<meta_call::Output>`: `Greeted` with its receipt, `Answer`
+  with the exchange and the Output, and `End` with the exchange and its
+  conclusion;
+- one connection carries any number of exchanges; a Subscribe answers its
+  acknowledgement, the current state and each change on its one exchange; a
+  subscriber whose queue overflows has its exchange ended `Faulted.Lagged`
+  where its connection used to close;
+- a frame the Nexus cannot read, an exchange opened before the greeting and a
+  second greeting are each answered by `End` against the connection, which
+  then closes.
+
+The Call, its Caller, both payloads, the transport types and the Emission
+contract are unchanged. `crate::exchange` holds the call contracts' digests
+(`Contracted` for `public_call::Input` and `meta_call::Input`), the querying
+connection and the two frame reads.
+
+**Ethos.** The wire crate's declarations move with it, unchanged, from
+`ethos/` to `crates/wire/ethos/`, so the crate reads the call contracts'
+sources for their digests.
+
+**API.** `serve_public_once` and `serve_meta_once` are gone:
+`PublicConnection::new(stream, authority)` and `PublicConnection::serve` serve
+a public connection, and `serve_meta_connection` a meta connection.
+`Dispatcher::subscribe_bound` takes the connection and the exchange where it
+took a stream; `Dispatcher::subscribe` and `Dispatcher::subscribe_as` are gone.
+
 ## 0.3.0 — ethos-zero 30.0.0 and signal 11.1.0
 
 All six packages move to 0.3.0. Behaviour is unchanged.

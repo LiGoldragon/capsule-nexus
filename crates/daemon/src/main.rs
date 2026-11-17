@@ -1,4 +1,4 @@
-use signal::{FrameCapacity, FrameReading, FrameWriting, Restorable, Signal, Signalizable};
+use signal::{FrameCapacity, FrameReading, Restorable, Signal};
 use std::sync::Arc;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -44,64 +44,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Err(format!("Capsule Nexus public listener failed permanently: {error}").into());
             }
         };
-        let stream = accepted.stream;
-        let authority = accepted.authority;
         let Some(configuration) = bootstrap.snapshot() else {
             continue;
         };
         let dispatcher = Arc::clone(&dispatcher);
         std::thread::spawn(move || {
-            let result = (|| -> Result<(), Box<dyn std::error::Error>> {
-                let capacity = FrameCapacity::from(configuration.frame_capacity_bytes);
-                let mut input = capsule_nexus_daemon::DeadlineStream::new(
-                    stream.try_clone()?,
-                    configuration.transport_timeout,
-                )?;
-                let body = input.read_frame(capacity)?;
-                let call =
-                    Signal::<capsule_nexus_wire::public_call::Input>::from(Vec::<u8>::from(body))
-                        .restore()?;
-                let capsule_nexus_wire::public_call::Input::Call(call) = call;
-                let actual = capsule_nexus_wire::frame::peer_caller(&stream)?;
-                let peer_grant = authority.peer_grant();
-                if let Some((peer_id, generation)) = &peer_grant {
-                    if !dispatcher.peer_grant_is_current(&actual, peer_id, *generation) {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::PermissionDenied,
-                            "configured peer binding changed before request dispatch",
-                        )
-                        .into());
-                    }
-                }
-                let principal = capsule_nexus_daemon::principal_for(&authority, &actual, &call.caller)?;
-                let response = match dispatcher.dispatch_as(
-                    principal.clone(),
-                    call.public_input.0,
-                    Arc::clone(&configuration),
-                ) {
-                    capsule_nexus_daemon::PublicDispatch::Subscribe(session) => {
-                        return dispatcher.subscribe_bound(
-                            stream,
-                            principal,
-                            peer_grant,
-                            session,
-                            configuration,
-                        )
-                    }
-                    capsule_nexus_daemon::PublicDispatch::Answered(response) => response,
-                };
-                let response = capsule_nexus_wire::public_call::Output::Answered(
-                    capsule_nexus_wire::public_payload::Output(response),
-                );
-                let mut output = capsule_nexus_daemon::DeadlineStream::new(
-                    stream,
-                    configuration.transport_timeout,
-                )?;
-                output.write_frame(&response.signalize()?, capacity)?;
-                Ok(())
-            })();
-            if let Err(error) = result {
-                eprintln!("Capsule Nexus public request failed: {error}");
+            match capsule_nexus_daemon::PublicConnection::new(accepted.stream, accepted.authority) {
+                Ok(connection) => connection.serve(&dispatcher, &configuration),
+                Err(error) => eprintln!("Capsule Nexus public connection failed: {error}"),
             }
         });
     }

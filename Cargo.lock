@@ -51,7 +51,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "capsule-nexus-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "datom-codec",
  "emission-capsule-nexus",
@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "capsule-nexus-daemon"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "capsule-nexus-core",
  "capsule-nexus-wire",
@@ -79,7 +79,7 @@ dependencies = [
 
 [[package]]
 name = "capsule-nexus-translator"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "capsule-nexus-wire",
  "core-meta-capsule-nexus",
@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "capsule-nexus-wire"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "core-meta-capsule-nexus",
  "datom-codec",
@@ -130,7 +130,7 @@ checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
 name = "core-meta-capsule-nexus"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "datom-codec",
  "meta-signal-capsule-nexus",
@@ -162,7 +162,7 @@ dependencies = [
 
 [[package]]
 name = "emission-capsule-nexus"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "datom-codec",
  "protos",
@@ -293,8 +293,8 @@ dependencies = [
 
 [[package]]
 name = "meta-signal-capsule-nexus"
-version = "1.0.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-capsule-nexus?rev=0a9e3e0a91836ac178f489d633ea9ee288975ba4#0a9e3e0a91836ac178f489d633ea9ee288975ba4"
+version = "1.0.1"
+source = "git+https://github.com/LiGoldragon/meta-signal-capsule-nexus?rev=76b4235650b6b1940478c30fc992d17c6e0e0459#76b4235650b6b1940478c30fc992d17c6e0e0459"
 dependencies = [
  "datom-codec",
  "protos",
@@ -528,8 +528,8 @@ dependencies = [
 
 [[package]]
 name = "signal"
-version = "11.1.0"
-source = "git+https://github.com/LiGoldragon/signal?rev=b145ddb#b145ddb40c73d2545697fd9c8e049e562978a3ac"
+version = "11.2.0"
+source = "git+https://github.com/LiGoldragon/signal?rev=4f5cbb9#4f5cbb9322ecae7a8821439179e778d495d7804a"
 dependencies = [
  "datom-codec",
  "ethos-zero",
@@ -541,8 +541,8 @@ dependencies = [
 
 [[package]]
 name = "signal-capsule-nexus"
-version = "1.0.0"
-source = "git+https://github.com/LiGoldragon/signal-capsule-nexus?rev=537fd4eb51034237d28d700706b3214a658f3d13#537fd4eb51034237d28d700706b3214a658f3d13"
+version = "1.0.1"
+source = "git+https://github.com/LiGoldragon/signal-capsule-nexus?rev=d57c6f1d7cdd16f1d81349352c60dda86be337a2#d57c6f1d7cdd16f1d81349352c60dda86be337a2"
 dependencies = [
  "datom-codec",
  "protos",
@@ -688,8 +688,8 @@ dependencies = [
 
 [[package]]
 name = "translator"
-version = "0.5.1"
-source = "git+https://github.com/LiGoldragon/translator?rev=2310db3#2310db311e8bd3cbbda308fbc3d8ac76c14049c7"
+version = "0.5.2"
+source = "git+https://github.com/LiGoldragon/translator?rev=29601a3#29601a3485bf8b726e7a2da7b3fa73a8a8bce58d"
 dependencies = [
  "datom-codec",
  "libc",

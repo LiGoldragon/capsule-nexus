@@ -87,6 +87,34 @@ complete valid configuration. The public text and emission lanes share the
 public translator socket; meta text has its own translator socket. Every lane
 checks the peer UID at the same-login boundary.
 
+## The Nexus sockets speak exchanges
+
+Both Nexus sockets, public and meta, speak `signal`'s exchange layer. The
+querying side greets a connection once with the digest of its call contract's
+authored source (`crates/wire/ethos/public-call.ethos` or `meta-call.ethos`);
+a peer built from another source is refused and the connection closes. After
+the greeting the connection carries any number of exchanges, each opened by the
+querying side with an identifier it mints and a query that is the Call with its
+Caller: `public_call::Input` or `meta_call::Input`, the envelope and the
+identity as they were. Every frame the Nexus sends names its exchange.
+
+A one-answer input is answered by one `Delivery::Answer` on its exchange, and
+the exchange ends with it. A Subscribe is an exchange that goes on answering:
+its acknowledgement first, the current state of each owned pane after it, then
+one Answer per change. A subscriber that falls further behind than its queue
+holds has its exchange ended `Faulted.Lagged`, and opens Subscribe again; a
+subscription withdrawn with its peer's binding closes its connection; the
+querying side unsubscribes by abandoning the exchange or closing the
+connection.
+
+The public socket answers each exchange on a thread of its own, so several
+calls and subscriptions share one connection; the authority is the
+connection's, taken from its peer credentials at accept, and each Call's Caller
+is checked against it. The greeting must arrive within the transport timeout;
+after it a connection may be quiet. The meta socket serves one connection at a
+time, the whole of it within the bootstrap deadline, and answers its exchanges
+in turn.
+
 ## External calls
 
 Each external command bears the checked `Arguable` trait on its own concrete
@@ -97,7 +125,7 @@ Successful Herdr JSON is decoded only from stdout. A nonzero process result is
 decoded only from Herdr's documented stderr error envelope, with no fallback
 between the channels. The bounded runner drains both pipes while retaining at
 most the configured joint output limit. `Subscribe` is routed once into its
-dedicated stream; it has no parallel one-shot fallback.
+dedicated stream, one exchange on the Nexus; it has no parallel one-shot fallback.
 
 Every authored Ethos contract has its own deterministic generated-file check.
 The aggregate `generated` check depends on all of those checks; it does not

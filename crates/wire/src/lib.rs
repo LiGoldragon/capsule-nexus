@@ -1,7 +1,8 @@
 //! Shared typed ingress and bounded lane framing for the Capsule Nexus.
 
-pub mod frame;
 pub mod deadline;
+pub mod exchange;
+pub mod frame;
 #[allow(unused_imports)] // the generated module imports the transport types it may not use
 pub mod meta_call;
 pub mod meta_payload;
