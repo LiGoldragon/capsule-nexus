@@ -1,7 +1,8 @@
 Signal
 [ shared_translator:[ Caller ]                         ; imports
-  meta_payload:[ Input Output ] ]
-[ Call.{ Caller Input } ]                              ; inputs
-[ Answered.Output                                      ; outputs
+  :meta_payload:MetaInput.Input
+  :meta_payload:MetaOutput.Output ]
+[ Call.{ Caller MetaInput } ]                          ; inputs
+[ Answered.MetaOutput                                  ; outputs
   Failed.String ]
 []                                                     ; types

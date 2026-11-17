@@ -1,5 +1,15 @@
 # Upgrades
 
+## 0.3.0 — ethos-zero 30.0.0 and signal 11.1.0
+
+All six packages move to 0.3.0. Behaviour is unchanged.
+
+**Pins.** signal-capsule-nexus 1.0.0 (`537f`), meta-signal-capsule-nexus 1.0.0 (`0a9e`), translator 0.5.1 (`2310`) and signal 11.1.0 (`b145`); datom-codec 09a0526 and protos c93b598 stay. The generator is ethos-zero 30.0.0 (`b97d`).
+
+**Generated names.** Every Signal's roots are `Input` and `Output` where they were `Query` and `Response`, here and in both contracts, and each generates `Answering` and `Answerable` beside them. `Outcome::AttemptInProgress` carries `Pane` directly.
+
+**Ethos.** A Signal may no longer import names `Input` and `Output`, so `public-call.ethos` and `meta-call.ethos` import their payloads as `PublicInput`/`PublicOutput` and `MetaInput`/`MetaOutput`, and `Call_Data`'s field is `public_input` or `meta_input` where it was `input`. The payload Libraries name `signal_capsule_nexus:Input`/`Output` and `core_meta_capsule_nexus:Input`/`Output` and import nothing. Variant names, order and payloads are unchanged, so the rkyv archive and the Datom text of every frame are unchanged.
+
 ## 0.2.0 — Protos 0.33.0 and the nexus place layout
 
 All six packages move to 0.2.0.

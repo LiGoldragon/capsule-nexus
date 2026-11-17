@@ -1,6 +1,6 @@
 Library
-[ signal_capsule_nexus:[ Query Response ] ]              ; imports
-[ Input.signal_capsule_nexus:Query                       ; types
-  Output.signal_capsule_nexus:Response ]
+[]                                                     ; imports
+[ Input.signal_capsule_nexus:Input                       ; types
+  Output.signal_capsule_nexus:Output ]
 []                                                     ; traits
 []                                                     ; associations

@@ -257,7 +257,7 @@ rec {
       };
       "capsule-nexus-core" = rec {
         crateName = "capsule-nexus-core";
-        version = "0.2.0";
+        version = "0.3.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/core; };
         libName = "capsule_nexus_core";
@@ -300,7 +300,7 @@ rec {
       };
       "capsule-nexus-daemon" = rec {
         crateName = "capsule-nexus-daemon";
-        version = "0.2.0";
+        version = "0.3.0";
         edition = "2021";
         crateBin = [
           {
@@ -365,7 +365,7 @@ rec {
       };
       "capsule-nexus-translator" = rec {
         crateName = "capsule-nexus-translator";
-        version = "0.2.0";
+        version = "0.3.0";
         edition = "2021";
         crateBin = [
           {
@@ -475,7 +475,7 @@ rec {
       };
       "capsule-nexus-wire" = rec {
         crateName = "capsule-nexus-wire";
-        version = "0.2.0";
+        version = "0.3.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/wire; };
         libName = "capsule_nexus_wire";
@@ -574,7 +574,7 @@ rec {
       };
       "core-meta-capsule-nexus" = rec {
         crateName = "core-meta-capsule-nexus";
-        version = "0.2.0";
+        version = "0.3.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/core-meta; };
         libName = "core_meta_capsule_nexus";
@@ -681,7 +681,7 @@ rec {
       };
       "emission-capsule-nexus" = rec {
         crateName = "emission-capsule-nexus";
-        version = "0.2.0";
+        version = "0.3.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/emission; };
         libName = "emission_capsule_nexus";
@@ -1083,13 +1083,13 @@ rec {
       };
       "meta-signal-capsule-nexus" = rec {
         crateName = "meta-signal-capsule-nexus";
-        version = "0.4.1";
+        version = "1.0.0";
         edition = "2021";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/meta-signal-capsule-nexus";
-          rev = "b8fde9e2be92f75945a208208d4b93d6e5fd7e69";
-          sha256 = "057saxdlfvsg1kcysi98f8m5ph8a407i7jgjxxxzavklkg0d3dvy";
+          rev = "0a9e3e0a91836ac178f489d633ea9ee288975ba4";
+          sha256 = "0w7rdwra49cjmlhwr969gywc15fff4gf8k35pd15nbvynfzjn7g7";
         };
         libName = "meta_signal_capsule_nexus";
         dependencies = [
@@ -1888,20 +1888,25 @@ rec {
       };
       "signal" = rec {
         crateName = "signal";
-        version = "11.0.0";
+        version = "11.1.0";
         edition = "2024";
         links = "signal";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/signal";
-          rev = "6d4eb74a238ea4a6149bd12c42a8c06aec01b154";
-          sha256 = "0hqy8k58s6sc9wz76k8iq40bv636js5s951zgd01ncrxcy6h776a";
+          rev = "b145ddb40c73d2545697fd9c8e049e562978a3ac";
+          sha256 = "1jz3hjcflxr5ngipksmm1vd39xjkbp58fvs7yfkv564ddccbin7p";
         };
         dependencies = [
           {
             name = "datom-codec";
             packageId = "datom-codec";
             optional = true;
+          }
+          {
+            name = "futures-core";
+            packageId = "futures-core";
+            usesDefaultFeatures = false;
           }
           {
             name = "protos";
@@ -1932,13 +1937,13 @@ rec {
       };
       "signal-capsule-nexus" = rec {
         crateName = "signal-capsule-nexus";
-        version = "0.4.0";
+        version = "1.0.0";
         edition = "2021";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/signal-capsule-nexus";
-          rev = "dc941e72a31f7084f80b6fa8fe9aa49963acb4a1";
-          sha256 = "1hxhr2010pg6jb9926hmrm6gyb7c7bl6qfyf6xphfigz3p18m0jk";
+          rev = "537fd4eb51034237d28d700706b3214a658f3d13";
+          sha256 = "1cdnfxzgri7q9996400ykp5nz0qqmx8kc1xgihrv3h4sq74178ih";
         };
         libName = "signal_capsule_nexus";
         dependencies = [
@@ -2404,13 +2409,13 @@ rec {
       };
       "translator" = rec {
         crateName = "translator";
-        version = "0.5.0";
+        version = "0.5.1";
         edition = "2021";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/translator";
-          rev = "abc89b9cc7469a35700cb222ba31a8f5cb0745e6";
-          sha256 = "1907l121f2i6qvfimxn5n2vp2wbhsb3rwfwm82x2x0vlfyfdgp1z";
+          rev = "2310db311e8bd3cbbda308fbc3d8ac76c14049c7";
+          sha256 = "1qxjkm7qszmiwnmb9yhmbynfdz4lk9qr36107ym4lya0xkc5ffs5";
         };
         dependencies = [
           {

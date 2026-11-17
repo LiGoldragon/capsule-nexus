@@ -213,7 +213,7 @@ fn serve_one_paired(
                 return write_failed_frame(&mut output, lane, &error.to_string(), bootstrap.admission.frame_capacity);
             }
         };
-        if matches!(query, signal_capsule_nexus::Query::Subscribe(_)) {
+        if matches!(query, signal_capsule_nexus::Input::Subscribe(_)) {
             drop(io);
             return forward_public_stream(
                 stream,
@@ -252,7 +252,7 @@ fn serve_one_paired(
     let response = (|| -> Result<Frame, ServerError> {
         Ok(match request.lane {
             Lane::EmissionSignal => {
-                let query = Signal::<emission_capsule_nexus::Query>::from(request.payload)
+                let query = Signal::<emission_capsule_nexus::Input>::from(request.payload)
                     .restore()
                     .map_err(|error| ServerError::Signal(format!("{error:?}")))?;
                 let Some(ready) = configuration.ready() else {
@@ -260,8 +260,8 @@ fn serve_one_paired(
                         "translator is awaiting settings".into(),
                     ));
                 };
-                let emission_capsule_nexus::Query::Emit(herdr) = query;
-                let response = emission_capsule_nexus::Response::Emitted(execute(&ready.runtime(), &herdr))
+                let emission_capsule_nexus::Input::Emit(herdr) = query;
+                let response = emission_capsule_nexus::Output::Emitted(execute(&ready.runtime(), &herdr))
                     .signalize()
                     .map_err(|error| ServerError::Signal(format!("{error:?}")))?;
                 Frame {
@@ -374,9 +374,9 @@ impl TranslatorConfiguration {
         Some(ready)
     }
 
-    fn apply(&self, setting: meta_signal_capsule_nexus::Set) -> meta_signal_capsule_nexus::Response {
+    fn apply(&self, setting: meta_signal_capsule_nexus::Set) -> meta_signal_capsule_nexus::Output {
         use meta_signal_capsule_nexus::{
-            Configured_Data, Owner, Readiness, Response, Set, SettingName,
+            Configured_Data, Owner, Readiness, Output, Set, SettingName,
         };
         let applied = setting.clone();
         let mut partial = self
@@ -419,7 +419,7 @@ impl TranslatorConfiguration {
             }
             Set::HerdrPath(_) => Some(SettingName::HerdrPath),
             other => {
-                return Response::ConfigureRefused(invalid_setting(
+                return Output::ConfigureRefused(invalid_setting(
                     Owner::Translator,
                     setting_name(&other),
                     "setting belongs to Nexus",
@@ -427,7 +427,7 @@ impl TranslatorConfiguration {
             }
         };
         if let Some(name) = invalid {
-            return Response::ConfigureRefused(invalid_setting(
+            return Output::ConfigureRefused(invalid_setting(
                 Owner::Translator,
                 name,
                 "invalid setting value",
@@ -446,7 +446,7 @@ impl TranslatorConfiguration {
         if partial.text_budget.is_none() {
             awaiting.push(SettingName::TextBudget);
         }
-        Response::Configured(Configured_Data {
+        Output::Configured(Configured_Data {
             set: applied,
             owner: Owner::Translator,
             readiness: if awaiting.is_empty() {
@@ -468,11 +468,11 @@ fn configure_text(
 ) -> Result<String, ServerError> {
     use datom_codec::{Actualizing, Potential};
     let mut budget = crate::text_budget(bootstrap.text_budget.0, bootstrap.text_budget.1);
-    let mut potential = Potential::<meta_signal_capsule_nexus::Query>::from(text);
+    let mut potential = Potential::<meta_signal_capsule_nexus::Input>::from(text);
     let query = potential
         .actualize(&mut budget)
         .map_err(|error| ServerError::Signal(format!("{error:?}")))?;
-    let meta_signal_capsule_nexus::Query::Configure(setting) = query;
+    let meta_signal_capsule_nexus::Input::Configure(setting) = query;
     let response = match setting {
         setting @ (meta_signal_capsule_nexus::Set::HerdrPath(_)
         | meta_signal_capsule_nexus::Set::CallTimeout(_)
@@ -505,9 +505,9 @@ fn validated_budget(value: &meta_signal_capsule_nexus::BudgetValue) -> Option<(u
 fn decode_public(
     text: &str,
     budget: &mut datom_codec::Budget,
-) -> Result<signal_capsule_nexus::Query, ServerError> {
+) -> Result<signal_capsule_nexus::Input, ServerError> {
     use datom_codec::{Actualizing, Potential};
-    let mut potential = Potential::<signal_capsule_nexus::Query>::from(text);
+    let mut potential = Potential::<signal_capsule_nexus::Input>::from(text);
     potential
         .actualize(budget)
         .map_err(|error| ServerError::Signal(format!("{error:?}")))
@@ -548,16 +548,16 @@ fn core_setting(setting: meta_signal_capsule_nexus::Set) -> Result<core_meta_cap
 fn forward_public(
     place: &Place,
     caller: shared_translator::Caller,
-    input: signal_capsule_nexus::Query,
+    input: signal_capsule_nexus::Input,
     timeout: Duration,
     frame_capacity: usize,
-) -> Result<signal_capsule_nexus::Response, ServerError> {
+) -> Result<signal_capsule_nexus::Output, ServerError> {
     let request =
-        capsule_nexus_wire::public_call::Query::Call(capsule_nexus_wire::public_call::Call_Data {
+        capsule_nexus_wire::public_call::Input::Call(capsule_nexus_wire::public_call::Call_Data {
             caller,
-            input: capsule_nexus_wire::public_payload::Input(input),
+            public_input: capsule_nexus_wire::public_payload::Input(input),
         });
-    let response: capsule_nexus_wire::public_call::Response = public_binary_call(
+    let response: capsule_nexus_wire::public_call::Output = public_binary_call(
         shared_translator::placement::runtime_path(place)
             .join(capsule_nexus_wire::socket_names().public_nexus_socket.0),
         request,
@@ -565,8 +565,8 @@ fn forward_public(
         frame_capacity,
     )?;
     match response {
-        capsule_nexus_wire::public_call::Response::Answered(output) => Ok(output.0),
-        capsule_nexus_wire::public_call::Response::Failed(message) => {
+        capsule_nexus_wire::public_call::Output::Answered(output) => Ok(output.0),
+        capsule_nexus_wire::public_call::Output::Failed(message) => {
             Err(ServerError::Signal(message))
         }
     }
@@ -611,15 +611,15 @@ fn forward_public_stream(
     client: &UnixStream,
     place: &Place,
     caller: shared_translator::Caller,
-    input: signal_capsule_nexus::Query,
+    input: signal_capsule_nexus::Input,
     progress_timeout: Duration,
     admission_limit: usize,
 ) -> Result<(), ServerError> {
     use shared_translator::FrameWriting;
     let request =
-        capsule_nexus_wire::public_call::Query::Call(capsule_nexus_wire::public_call::Call_Data {
+        capsule_nexus_wire::public_call::Input::Call(capsule_nexus_wire::public_call::Call_Data {
             caller,
-            input: capsule_nexus_wire::public_payload::Input(input),
+            public_input: capsule_nexus_wire::public_payload::Input(input),
         });
     let core = UnixStream::connect(
         shared_translator::placement::runtime_path(place)
@@ -645,12 +645,12 @@ fn forward_public_stream(
         )? else {
             return Ok(());
         };
-        let response = Signal::<capsule_nexus_wire::public_call::Response>::from(body)
+        let response = Signal::<capsule_nexus_wire::public_call::Output>::from(body)
             .restore()
             .map_err(|error| ServerError::Signal(format!("{error:?}")))?;
         let response = match response {
-            capsule_nexus_wire::public_call::Response::Answered(output) => output.0,
-            capsule_nexus_wire::public_call::Response::Failed(message) => {
+            capsule_nexus_wire::public_call::Output::Answered(output) => output.0,
+            capsule_nexus_wire::public_call::Output::Failed(message) => {
                 return Err(ServerError::Signal(message));
             }
         };
@@ -711,15 +711,15 @@ fn forward_meta(
     input: core_meta_capsule_nexus::CoreSet,
     timeout: Duration,
     frame_capacity: usize,
-) -> Result<meta_signal_capsule_nexus::Response, ServerError> {
+) -> Result<meta_signal_capsule_nexus::Output, ServerError> {
     let request =
-        capsule_nexus_wire::meta_call::Query::Call(capsule_nexus_wire::meta_call::Call_Data {
+        capsule_nexus_wire::meta_call::Input::Call(capsule_nexus_wire::meta_call::Call_Data {
             caller,
-            input: capsule_nexus_wire::meta_payload::Input(core_meta_capsule_nexus::Query::Configure(
+            meta_input: capsule_nexus_wire::meta_payload::Input(core_meta_capsule_nexus::Input::Configure(
                 input,
             )),
         });
-    let response: capsule_nexus_wire::meta_call::Response = binary_call(
+    let response: capsule_nexus_wire::meta_call::Output = binary_call(
         shared_translator::placement::runtime_path(place)
             .join(capsule_nexus_wire::socket_names().meta_nexus_socket.0),
         request,
@@ -727,9 +727,9 @@ fn forward_meta(
         frame_capacity,
     )?;
     match response {
-        capsule_nexus_wire::meta_call::Response::Answered(output) => match output.0 {
-            core_meta_capsule_nexus::Response::Configured(configured) => {
-                Ok(meta_signal_capsule_nexus::Response::Configured(
+        capsule_nexus_wire::meta_call::Output::Answered(output) => match output.0 {
+            core_meta_capsule_nexus::Output::Configured(configured) => {
+                Ok(meta_signal_capsule_nexus::Output::Configured(
                     meta_signal_capsule_nexus::Configured_Data {
                         set: public_setting(configured.core_set),
                         owner: meta_signal_capsule_nexus::Owner::Nexus,
@@ -737,11 +737,11 @@ fn forward_meta(
                     },
                 ))
             }
-            core_meta_capsule_nexus::Response::ConfigureRefused(refusal) => {
-                Ok(meta_signal_capsule_nexus::Response::ConfigureRefused(refusal))
+            core_meta_capsule_nexus::Output::ConfigureRefused(refusal) => {
+                Ok(meta_signal_capsule_nexus::Output::ConfigureRefused(refusal))
             }
         },
-        capsule_nexus_wire::meta_call::Response::Failed(message) => Err(ServerError::Signal(message)),
+        capsule_nexus_wire::meta_call::Output::Failed(message) => Err(ServerError::Signal(message)),
     }
 }
 
@@ -1548,7 +1548,7 @@ mod tests {
         assert_eq!(malformed.kind, Kind::Failed);
 
         let query =
-            meta_signal_capsule_nexus::Query::Configure(meta_signal_capsule_nexus::Set::HerdrPath(
+            meta_signal_capsule_nexus::Input::Configure(meta_signal_capsule_nexus::Set::HerdrPath(
                 meta_signal_capsule_nexus::PathValue("/usr/bin/herdr".into()),
             ));
         let answered = meta_request(&configuration, &shared_translator::encode(&query));
@@ -1559,15 +1559,15 @@ mod tests {
 
     #[test]
     fn herdr_path_must_be_absolute_and_failed_set_preserves_prior_value() {
-        use meta_signal_capsule_nexus::{PathValue, Response, Set};
+        use meta_signal_capsule_nexus::{PathValue, Output, Set};
         let configuration = TranslatorConfiguration::default();
         assert!(matches!(
             configuration.apply(Set::HerdrPath(PathValue("/usr/bin/herdr".into()))),
-            Response::Configured(_)
+            Output::Configured(_)
         ));
         assert!(matches!(
             configuration.apply(Set::HerdrPath(PathValue("relative/herdr".into()))),
-            Response::ConfigureRefused(_)
+            Output::ConfigureRefused(_)
         ));
         assert_eq!(
             configuration
@@ -1757,18 +1757,18 @@ mod tests {
             let body = stream
                 .read_frame(FrameCapacity::from(MAXIMUM_SIGNAL_BYTES))
                 .expect("typed public Call");
-            let call = Signal::<capsule_nexus_wire::public_call::Query>::from(Vec::from(body))
+            let call = Signal::<capsule_nexus_wire::public_call::Input>::from(Vec::from(body))
                 .restore()
                 .expect("restore public Call");
             assert!(matches!(
                 call,
-                capsule_nexus_wire::public_call::Query::Call(ref data)
-                    if matches!(data.input.0, signal_capsule_nexus::Query::Start(_))
+                capsule_nexus_wire::public_call::Input::Call(ref data)
+                    if matches!(data.public_input.0, signal_capsule_nexus::Input::Start(_))
             ));
             std::thread::sleep(Duration::from_millis(75));
-            let response = capsule_nexus_wire::public_call::Response::Answered(
+            let response = capsule_nexus_wire::public_call::Output::Answered(
                 capsule_nexus_wire::public_payload::Output(
-                    signal_capsule_nexus::Response::Started(signal_capsule_nexus::Outcome::Done),
+                    signal_capsule_nexus::Output::Started(signal_capsule_nexus::Outcome::Done),
                 ),
             )
             .signalize()

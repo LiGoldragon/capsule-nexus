@@ -19,7 +19,7 @@ pub enum CoreSet {
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
-pub enum Query {
+pub enum Input {
     Configure(CoreSet),
 }
 #[rustfmt::skip]
@@ -32,13 +32,39 @@ pub struct Configured_Data {
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
-pub enum Response {
+pub enum Output {
     Configured(Configured_Data),
     ConfigureRefused(meta_signal_capsule_nexus::ConfigurationRefusal),
+}
+#[rustfmt::skip]
+#[allow(clippy::result_large_err, clippy::ptr_arg, clippy::borrowed_box)]
+pub trait Answering {
+    fn configure(
+        &self,
+        core_set: &CoreSet,
+    ) -> std::result::Result<Configured_Data, Output>;
+}
+#[rustfmt::skip]
+pub trait Answerable {
+    type Answer;
+    fn answer<Nexus: Answering>(&self, nexus: &Nexus) -> Self::Answer;
+}
+#[rustfmt::skip]
+impl Answerable for Input {
+    type Answer = Output;
+    fn answer<Nexus: Answering>(&self, nexus: &Nexus) -> Output {
+        match self {
+            Input::Configure(carried) => {
+                nexus
+                    .configure(carried)
+                    .map_or_else(|refusal| refusal, Output::Configured)
+            }
+        }
+    }
 }
 /// The generated internal meta contract source.
 pub const ETHOS: &str = include_str!("../ethos/core-meta.ethos");
 
-impl signal::Contracted for Query {
+impl signal::Contracted for Input {
     const CONTRACT_SOURCE: &'static str = ETHOS;
 }

@@ -7,8 +7,8 @@ edition = "2021"
 rust-version = "1.89"
 
 [workspace.dependencies]
-signal-capsule-nexus = { git = "https://github.com/LiGoldragon/signal-capsule-nexus", rev = "dc941e72a31f7084f80b6fa8fe9aa49963acb4a1", default-features = false }
-meta-signal-capsule-nexus = { git = "https://github.com/LiGoldragon/meta-signal-capsule-nexus", rev = "b8fde9e2be92f75945a208208d4b93d6e5fd7e69", default-features = false }
-signal = { git = "https://github.com/LiGoldragon/signal", rev = "6d4eb74", default-features = false }
-shared-translator = { package = "translator", git = "https://github.com/LiGoldragon/translator", rev = "abc89b9", default-features = false, features = ["unix"] }
-translator = { git = "https://github.com/LiGoldragon/translator", rev = "abc89b9", default-features = false }
+signal-capsule-nexus = { git = "https://github.com/LiGoldragon/signal-capsule-nexus", rev = "537fd4eb51034237d28d700706b3214a658f3d13", default-features = false }
+meta-signal-capsule-nexus = { git = "https://github.com/LiGoldragon/meta-signal-capsule-nexus", rev = "0a9e3e0a91836ac178f489d633ea9ee288975ba4", default-features = false }
+signal = { git = "https://github.com/LiGoldragon/signal", rev = "b145ddb", default-features = false }
+shared-translator = { package = "translator", git = "https://github.com/LiGoldragon/translator", rev = "2310db3", default-features = false, features = ["unix"] }
+translator = { git = "https://github.com/LiGoldragon/translator", rev = "2310db3", default-features = false }

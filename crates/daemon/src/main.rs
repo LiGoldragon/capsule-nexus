@@ -59,9 +59,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )?;
                 let body = input.read_frame(capacity)?;
                 let call =
-                    Signal::<capsule_nexus_wire::public_call::Query>::from(Vec::<u8>::from(body))
+                    Signal::<capsule_nexus_wire::public_call::Input>::from(Vec::<u8>::from(body))
                         .restore()?;
-                let capsule_nexus_wire::public_call::Query::Call(call) = call;
+                let capsule_nexus_wire::public_call::Input::Call(call) = call;
                 let actual = capsule_nexus_wire::frame::peer_caller(&stream)?;
                 let peer_grant = authority.peer_grant();
                 if let Some((peer_id, generation)) = &peer_grant {
@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let principal = capsule_nexus_daemon::principal_for(&authority, &actual, &call.caller)?;
                 let response = match dispatcher.dispatch_as(
                     principal.clone(),
-                    call.input.0,
+                    call.public_input.0,
                     Arc::clone(&configuration),
                 ) {
                     capsule_nexus_daemon::PublicDispatch::Subscribe(session) => {
@@ -90,7 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     capsule_nexus_daemon::PublicDispatch::Answered(response) => response,
                 };
-                let response = capsule_nexus_wire::public_call::Response::Answered(
+                let response = capsule_nexus_wire::public_call::Output::Answered(
                     capsule_nexus_wire::public_payload::Output(response),
                 );
                 let mut output = capsule_nexus_daemon::DeadlineStream::new(

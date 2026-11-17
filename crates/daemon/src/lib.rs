@@ -92,7 +92,7 @@ impl Bootstrap {
     pub fn configure(
         &self,
         setting: core_meta_capsule_nexus::CoreSet,
-    ) -> core_meta_capsule_nexus::Response {
+    ) -> core_meta_capsule_nexus::Output {
         let mut staged = None;
         let response = self.store.configure(setting, || {
             let listener = OwnedListener::bind(self.paths.public.clone()).map_err(|error| {
@@ -254,7 +254,7 @@ fn require_peer(
 pub fn serve_meta_once<S>(
     stream: &mut S,
     capacity: signal::FrameCapacity,
-    configure: impl FnOnce(core_meta_capsule_nexus::CoreSet) -> core_meta_capsule_nexus::Response,
+    configure: impl FnOnce(core_meta_capsule_nexus::CoreSet) -> core_meta_capsule_nexus::Output,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     S: std::io::Read + std::io::Write,
@@ -262,13 +262,13 @@ where
     use signal::{FrameReading, FrameWriting, Restorable, Signal, Signalizable};
     let frame = stream.read_frame(capacity)?;
     let query =
-        Signal::<capsule_nexus_wire::meta_call::Query>::from(Vec::<u8>::from(frame)).restore()?;
+        Signal::<capsule_nexus_wire::meta_call::Input>::from(Vec::<u8>::from(frame)).restore()?;
     let response = match query {
-        capsule_nexus_wire::meta_call::Query::Call(call) => {
-            let response = match call.input.0 {
-                core_meta_capsule_nexus::Query::Configure(setting) => configure(setting),
+        capsule_nexus_wire::meta_call::Input::Call(call) => {
+            let response = match call.meta_input.0 {
+                core_meta_capsule_nexus::Input::Configure(setting) => configure(setting),
             };
-            capsule_nexus_wire::meta_call::Response::Answered(capsule_nexus_wire::meta_payload::Output(
+            capsule_nexus_wire::meta_call::Output::Answered(capsule_nexus_wire::meta_payload::Output(
                 response,
             ))
         }
@@ -287,16 +287,16 @@ pub fn serve_public_once<S, H>(
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     S: std::io::Read + std::io::Write,
-    H: FnOnce(signal_capsule_nexus::Query) -> signal_capsule_nexus::Response,
+    H: FnOnce(signal_capsule_nexus::Input) -> signal_capsule_nexus::Output,
 {
     use signal::{FrameReading, FrameWriting, Restorable, Signal, Signalizable};
     let frame = stream.read_frame(capacity)?;
     let query =
-        Signal::<capsule_nexus_wire::public_call::Query>::from(Vec::<u8>::from(frame)).restore()?;
+        Signal::<capsule_nexus_wire::public_call::Input>::from(Vec::<u8>::from(frame)).restore()?;
     let response = match query {
-        capsule_nexus_wire::public_call::Query::Call(call) => {
-            capsule_nexus_wire::public_call::Response::Answered(
-                capsule_nexus_wire::public_payload::Output(handle(call.input.0)),
+        capsule_nexus_wire::public_call::Input::Call(call) => {
+            capsule_nexus_wire::public_call::Output::Answered(
+                capsule_nexus_wire::public_payload::Output(handle(call.public_input.0)),
             )
         }
     };
@@ -319,7 +319,7 @@ pub struct Dispatcher {
 /// The complete public operation decision: answer once or establish the
 /// dedicated subscription stream. Subscribe has no parallel one-shot path.
 pub enum PublicDispatch {
-    Answered(signal_capsule_nexus::Response),
+    Answered(signal_capsule_nexus::Output),
     Subscribe(signal_capsule_nexus::Session),
 }
 
@@ -371,13 +371,13 @@ struct SubscriberQueue {
 }
 
 struct SubscriberQueueState {
-    pending: std::collections::VecDeque<signal_capsule_nexus::Response>,
+    pending: std::collections::VecDeque<signal_capsule_nexus::Output>,
     capacity: usize,
     closed: bool,
 }
 
 enum QueueNext {
-    Response(signal_capsule_nexus::Response),
+    Response(signal_capsule_nexus::Output),
     Quiet,
     Closed,
 }
@@ -394,7 +394,7 @@ impl SubscriberQueue {
         }
     }
 
-    fn enqueue(&self, response: signal_capsule_nexus::Response) -> bool {
+    fn enqueue(&self, response: signal_capsule_nexus::Output) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if state.closed || state.pending.len() >= state.capacity {
             state.closed = true;
@@ -449,29 +449,29 @@ impl SubscriberQueue {
 }
 
 fn operation(
-    query: signal_capsule_nexus::Query,
+    query: signal_capsule_nexus::Input,
 ) -> capsule_nexus_core::generated::operation::Operation {
     use capsule_nexus_core::generated::operation::{
         Operation, Pressing_Data, Prompting_Data, Starting_Data,
     };
     match query {
-        signal_capsule_nexus::Query::Create(workspace) => Operation::Creating(workspace),
-        signal_capsule_nexus::Query::Start(start) => Operation::Starting(Starting_Data {
+        signal_capsule_nexus::Input::Create(workspace) => Operation::Creating(workspace),
+        signal_capsule_nexus::Input::Start(start) => Operation::Starting(Starting_Data {
             pane: start.pane,
             command: start.command,
             label: start.label,
         }),
-        signal_capsule_nexus::Query::Prompt(prompt) => Operation::Prompting(Prompting_Data {
+        signal_capsule_nexus::Input::Prompt(prompt) => Operation::Prompting(Prompting_Data {
             pane: prompt.pane,
             text: prompt.text,
         }),
-        signal_capsule_nexus::Query::Press(press) => Operation::Pressing(Pressing_Data {
+        signal_capsule_nexus::Input::Press(press) => Operation::Pressing(Pressing_Data {
             pane: press.pane,
             keys: press.keys,
         }),
-        signal_capsule_nexus::Query::Close(pane) => Operation::Closing(pane),
-        signal_capsule_nexus::Query::List(session) => Operation::Listing(session),
-        signal_capsule_nexus::Query::Subscribe(session) => Operation::Subscribing(session),
+        signal_capsule_nexus::Input::Close(pane) => Operation::Closing(pane),
+        signal_capsule_nexus::Input::List(session) => Operation::Listing(session),
+        signal_capsule_nexus::Input::Subscribe(session) => Operation::Subscribing(session),
     }
 }
 
@@ -503,14 +503,14 @@ impl Dispatcher {
     pub fn dispatch_as(
         &self,
         principal: shared_translator::Principal,
-        query: signal_capsule_nexus::Query,
+        query: signal_capsule_nexus::Input,
         configuration: Arc<ReadyCoreConfiguration>,
     ) -> PublicDispatch {
         use emission_capsule_nexus::{
             AgentPrompt_Data, AgentStart_Data, Herdr, SendKeys_Data, Verb, WorkspaceCreate_Data,
         };
         use capsule_nexus_core::generated::operation::Operation;
-        use signal_capsule_nexus::Response;
+        use signal_capsule_nexus::Output;
         let response = match operation(query) {
             Operation::Creating(workspace) => {
                 let creation_id = {
@@ -520,7 +520,7 @@ impl Dispatcher {
                         sequence: signal_capsule_nexus::Sequence(state.next_creation_sequence),
                     };
                     let Some(next) = state.next_creation_sequence.checked_add(1) else {
-                        return PublicDispatch::Answered(Response::Created(signal_capsule_nexus::Outcome::StoreRefused(
+                        return PublicDispatch::Answered(Output::Created(signal_capsule_nexus::Outcome::StoreRefused(
                             signal_capsule_nexus::StoreRefusal {
                                 memory_refusal: signal_capsule_nexus::MemoryRefusal(
                                     signal_capsule_nexus::Message("creation sequence exhausted".into()),
@@ -535,7 +535,7 @@ impl Dispatcher {
                         workspace: workspace.clone(),
                     };
                     if let Err(outcome) = state.core.prepare_creation(pending) {
-                        return PublicDispatch::Answered(Response::Created(outcome));
+                        return PublicDispatch::Answered(Output::Created(outcome));
                     }
                     state.next_creation_sequence = next;
                     creation_id
@@ -557,12 +557,12 @@ impl Dispatcher {
                     state.revisions.insert(pane.clone(), 1);
                     state.principals.insert(pane.clone(), principal);
                 }
-                Response::Created(outcome)
+                Output::Created(outcome)
             }
             Operation::Starting(start) => {
                 let reservation = match self.reserve(&principal, &start.pane) {
                     Ok(token) => token,
-                    Err(outcome) => return PublicDispatch::Answered(Response::Started(outcome)),
+                    Err(outcome) => return PublicDispatch::Answered(Output::Started(outcome)),
                 };
                 let command = start.command.clone();
                 let external = self.execute(
@@ -591,12 +591,12 @@ impl Dispatcher {
                 ) {
                     bump_revision(&mut state.revisions, pane);
                 }
-                Response::Started(outcome)
+                Output::Started(outcome)
             }
             Operation::Prompting(prompt) => {
                 let reservation = match self.reserve(&principal, &prompt.pane) {
                     Ok(token) => token,
-                    Err(outcome) => return PublicDispatch::Answered(Response::Prompted(outcome)),
+                    Err(outcome) => return PublicDispatch::Answered(Output::Prompted(outcome)),
                 };
                 let text = prompt.text.clone();
                 let external = self.execute(
@@ -619,12 +619,12 @@ impl Dispatcher {
                 ) {
                     bump_revision(&mut state.revisions, pane);
                 }
-                Response::Prompted(outcome)
+                Output::Prompted(outcome)
             }
             Operation::Pressing(press) => {
                 let reservation = match self.reserve(&principal, &press.pane) {
                     Ok(token) => token,
-                    Err(outcome) => return PublicDispatch::Answered(Response::Pressed(outcome)),
+                    Err(outcome) => return PublicDispatch::Answered(Output::Pressed(outcome)),
                 };
                 let keys = press.keys.clone();
                 let external = self.execute(
@@ -647,12 +647,12 @@ impl Dispatcher {
                 ) {
                     bump_revision(&mut state.revisions, pane);
                 }
-                Response::Pressed(outcome)
+                Output::Pressed(outcome)
             }
             Operation::Closing(pane) => {
                 let reservation = match self.reserve(&principal, &pane) {
                     Ok(token) => token,
-                    Err(outcome) => return PublicDispatch::Answered(Response::Closed(outcome)),
+                    Err(outcome) => return PublicDispatch::Answered(Output::Closed(outcome)),
                 };
                 let external = self.execute(
                     &configuration,
@@ -676,24 +676,24 @@ impl Dispatcher {
                 } else if outcome == signal_capsule_nexus::Outcome::Uncertain {
                     bump_revision(&mut state.revisions, pane);
                 }
-                Response::Closed(outcome)
+                Output::Closed(outcome)
             }
             Operation::Listing(session) => {
                 let (captured, pending) = {
                     let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
                     let owned = match state.core.owned_in_session(&session) {
                         Ok(owned) => owned,
-                        Err(outcome) => return PublicDispatch::Answered(Response::Listed(outcome)),
+                        Err(outcome) => return PublicDispatch::Answered(Output::Listed(outcome)),
                     };
                     let pending = match state.core.pending_in_session(&session) {
                         Ok(pending) => pending,
-                        Err(outcome) => return PublicDispatch::Answered(Response::Listed(outcome)),
+                        Err(outcome) => return PublicDispatch::Answered(Output::Listed(outcome)),
                     };
                     let owns_any = owned.iter().any(|owned| {
                         state.principals.get(&owned.pane) == Some(&principal)
                     }) || pending.iter().any(|creation| creation.principal == principal);
                     if !owns_any {
-                        return PublicDispatch::Answered(Response::Listed(signal_capsule_nexus::Outcome::Listed(Vec::new())));
+                        return PublicDispatch::Answered(Output::Listed(signal_capsule_nexus::Outcome::Listed(Vec::new())));
                     }
                     (state.revisions.clone(), pending)
                 };
@@ -744,7 +744,7 @@ impl Dispatcher {
                         }
                     }
                 }
-                Response::Listed(outcome)
+                Output::Listed(outcome)
             }
             Operation::Subscribing(session) => return PublicDispatch::Subscribe(session),
         };
@@ -762,14 +762,14 @@ impl Dispatcher {
     }
 
     fn reserve(&self, principal: &shared_translator::Principal, pane: &signal_capsule_nexus::Pane) -> Result<u64, signal_capsule_nexus::Outcome> {
-        use signal_capsule_nexus::{AttemptInProgress, Outcome};
+        use signal_capsule_nexus::Outcome;
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         state.core.preflight_owned(pane)?;
         if state.principals.get(pane) != Some(principal) {
             return Err(Outcome::Unknown(pane.clone()));
         }
         if state.reserved.contains_key(pane) {
-            return Err(Outcome::AttemptInProgress(AttemptInProgress(pane.clone())));
+            return Err(Outcome::AttemptInProgress(pane.clone()));
         }
         let token = state.next_reservation;
         state.next_reservation = state.next_reservation.wrapping_add(1).max(1);
@@ -826,10 +826,10 @@ impl Dispatcher {
         session: signal_capsule_nexus::Session,
         configuration: Arc<ReadyCoreConfiguration>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        use signal_capsule_nexus::{Changed_Data, Response};
+        use signal_capsule_nexus::{Changed_Data, Output};
         let (acknowledgement, current) = {
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            let acknowledgement = Response::Subscribed(state.core.subscribe(
+            let acknowledgement = Output::Subscribed(state.core.subscribe(
                 session.clone(),
                 capsule_nexus_core::ExternalResult::Succeeded(()),
             ));
@@ -848,7 +848,7 @@ impl Dispatcher {
             return Err("subscriber queue refused its acknowledgement".into());
         }
         for (pane, state) in &current {
-            if !queue.enqueue(Response::Changed(Changed_Data {
+            if !queue.enqueue(Output::Changed(Changed_Data {
                     pane: pane.clone(),
                     state: state.clone(),
                 })) {
@@ -927,7 +927,7 @@ impl Dispatcher {
     }
 
     fn poll_subscription(self: Arc<Self>, principal: shared_translator::Principal, session: signal_capsule_nexus::Session, generation: u64) {
-        use signal_capsule_nexus::{Changed_Data, Outcome, Query, Response};
+        use signal_capsule_nexus::{Changed_Data, Outcome, Input, Output};
         loop {
             let Some(configuration) = self.configuration.snapshot() else {
                 return;
@@ -964,13 +964,13 @@ impl Dispatcher {
             }
             let response = match self.dispatch_as(
                 principal.clone(),
-                Query::List(session.clone()),
+                Input::List(session.clone()),
                 Arc::clone(&configuration),
             ) {
                 PublicDispatch::Answered(response) => response,
                 PublicDispatch::Subscribe(_) => return,
             };
-            let complete = matches!(response, Response::Listed(Outcome::Listed(_)));
+            let complete = matches!(response, Output::Listed(Outcome::Listed(_)));
             // Hold Memory stable through publication. Close uses the same
             // state-before-hub order, so an older poll can never reopen a
             // pane after its terminal Dead event.
@@ -1002,7 +1002,7 @@ impl Dispatcher {
                         .iter()
                         .filter(|(pane, state)| subscriber.delivered.get(*pane) != Some(*state))
                         .map(|(pane, state)| {
-                            Response::Changed(Changed_Data {
+                            Output::Changed(Changed_Data {
                                 pane: pane.clone(),
                                 state: state.clone(),
                             })
@@ -1035,7 +1035,7 @@ impl Dispatcher {
     }
 
     fn publish_closed(&self, principal: &shared_translator::Principal, pane: &signal_capsule_nexus::Pane) {
-        use signal_capsule_nexus::{Changed_Data, Response, State};
+        use signal_capsule_nexus::{Changed_Data, Output, State};
         let mut hub = self
             .subscriptions
             .lock()
@@ -1047,7 +1047,7 @@ impl Dispatcher {
             if subscriber.delivered.get(pane) == Some(&State::Dead) {
                 return subscriber.queue.is_open();
             }
-            let delivered = subscriber.queue.enqueue(Response::Changed(Changed_Data {
+            let delivered = subscriber.queue.enqueue(Output::Changed(Changed_Data {
                 pane: pane.clone(),
                 state: State::Dead,
             }));
@@ -1079,7 +1079,7 @@ impl ExternalEmitter for SocketEmitter {
             Ok(stream) => stream,
             Err(error) => return unavailable_transport(&self.translator_socket, error.to_string()),
         };
-        let request = emission_capsule_nexus::Query::Emit(herdr);
+        let request = emission_capsule_nexus::Input::Emit(herdr);
         let request = match request.signalize() {
             Ok(request) => request,
             Err(error) => {
@@ -1115,9 +1115,9 @@ impl ExternalEmitter for SocketEmitter {
                 return Err("translator returned a non-answer emission frame".into());
             }
             let response =
-                Signal::<emission_capsule_nexus::Response>::from(body.payload).restore()?;
+                Signal::<emission_capsule_nexus::Output>::from(body.payload).restore()?;
             match response {
-                emission_capsule_nexus::Response::Emitted(outcome) => Ok(outcome),
+                emission_capsule_nexus::Output::Emitted(outcome) => Ok(outcome),
             }
         })();
         EmissionResult::External(result.unwrap_or(emission_capsule_nexus::ExternalOutcome::Uncertain))
@@ -1187,11 +1187,11 @@ fn unavailable_transport(path: &std::path::Path, message: String) -> EmissionRes
 fn write_subscription_change(
     stream: &std::os::unix::net::UnixStream,
     configuration: &ReadyCoreConfiguration,
-    change: &signal_capsule_nexus::Response,
+    change: &signal_capsule_nexus::Output,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use signal::{FrameWriting, Signalizable};
     let mut output = DeadlineStream::new(stream.try_clone()?, configuration.transport_timeout)?;
-    let change = capsule_nexus_wire::public_call::Response::Answered(
+    let change = capsule_nexus_wire::public_call::Output::Answered(
         capsule_nexus_wire::public_payload::Output(change.clone()),
     );
     output.write_frame(
@@ -1503,8 +1503,8 @@ impl ConfigurationStore {
         &self,
         setting: core_meta_capsule_nexus::CoreSet,
         bind_public: impl FnOnce() -> Result<(), meta_signal_capsule_nexus::BootstrapRefusal>,
-    ) -> core_meta_capsule_nexus::Response {
-        use core_meta_capsule_nexus::Response;
+    ) -> core_meta_capsule_nexus::Output {
+        use core_meta_capsule_nexus::Output;
         use meta_signal_capsule_nexus::{
             ConfigurationRefusal, Invalid_Data, Message, Owner, SettingName,
         };
@@ -1566,7 +1566,7 @@ impl ConfigurationStore {
             ),
         };
         if !valid {
-            return Response::ConfigureRefused(ConfigurationRefusal::Invalid(Invalid_Data {
+            return Output::ConfigureRefused(ConfigurationRefusal::Invalid(Invalid_Data {
                 owner: Owner::Nexus,
                 setting_name: name,
                 message: Message(
@@ -1605,7 +1605,7 @@ impl ConfigurationStore {
                 .is_none()
         {
             if let Err(refusal) = bind_public() {
-                return Response::ConfigureRefused(ConfigurationRefusal::Unavailable(refusal));
+                return Output::ConfigureRefused(ConfigurationRefusal::Unavailable(refusal));
             }
         }
         *self.partial.write().unwrap_or_else(|p| p.into_inner()) = candidate;
@@ -1613,7 +1613,7 @@ impl ConfigurationStore {
             self.apply_subscriber_capacity(validated.subscriber_capacity);
             *self.current.write().unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(validated));
         }
-        Response::Configured(core_meta_capsule_nexus::Configured_Data {
+        Output::Configured(core_meta_capsule_nexus::Configured_Data {
             core_set: applied,
             readiness,
         })
@@ -1622,8 +1622,8 @@ impl ConfigurationStore {
     fn configure_peer(
         &self,
         setting: core_meta_capsule_nexus::CoreSet,
-    ) -> core_meta_capsule_nexus::Response {
-        use core_meta_capsule_nexus::Response;
+    ) -> core_meta_capsule_nexus::Output {
+        use core_meta_capsule_nexus::Output;
         use meta_signal_capsule_nexus::{ConfigurationRefusal, Readiness};
         let applied = setting.clone();
         match setting {
@@ -1635,7 +1635,7 @@ impl ConfigurationStore {
                 let live = match shared_translator::unix::LivePeer::capture(binding.peer_identity) {
                     Ok(live) => live,
                     Err(error) => {
-                        return Response::ConfigureRefused(invalid_peer(&format!(
+                        return Output::ConfigureRefused(invalid_peer(&format!(
                             "peer process is unavailable: {error}"
                         )));
                     }
@@ -1644,7 +1644,7 @@ impl ConfigurationStore {
                 if peers.iter().any(|(peer_id, peer)| {
                     peer_id != &binding.peer_id && peer.matches(&caller)
                 }) {
-                    return Response::ConfigureRefused(invalid_peer(
+                    return Output::ConfigureRefused(invalid_peer(
                         "peer process identity is already bound to another peer",
                     ));
                 }
@@ -1665,12 +1665,12 @@ impl ConfigurationStore {
                 let mut peers = self.peers.lock().unwrap_or_else(|p| p.into_inner());
                 if peers.remove(&peer_id).is_none()
                 {
-                    return Response::ConfigureRefused(ConfigurationRefusal::UnknownPeer(peer_id));
+                    return Output::ConfigureRefused(ConfigurationRefusal::UnknownPeer(peer_id));
                 }
                 self.close_peer_subscriptions(&applied);
             }
             _ => {
-                return Response::ConfigureRefused(ConfigurationRefusal::Invalid(
+                return Output::ConfigureRefused(ConfigurationRefusal::Invalid(
                     meta_signal_capsule_nexus::Invalid_Data {
                         owner: meta_signal_capsule_nexus::Owner::Nexus,
                         setting_name: meta_signal_capsule_nexus::SettingName::Peer,
@@ -1682,7 +1682,7 @@ impl ConfigurationStore {
             }
         }
         let ready = self.current.read().unwrap_or_else(|p| p.into_inner());
-        Response::Configured(core_meta_capsule_nexus::Configured_Data {
+        Output::Configured(core_meta_capsule_nexus::Configured_Data {
             core_set: applied,
             readiness: if ready.is_some() { Readiness::Ready } else { readiness(&self.partial.read().unwrap_or_else(|p| p.into_inner())) },
         })
@@ -1813,11 +1813,11 @@ mod tests {
     use super::*;
 
     trait AnsweredForTest {
-        fn answered(self) -> Option<signal_capsule_nexus::Response>;
+        fn answered(self) -> Option<signal_capsule_nexus::Output>;
     }
 
     impl AnsweredForTest for PublicDispatch {
-        fn answered(self) -> Option<signal_capsule_nexus::Response> {
+        fn answered(self) -> Option<signal_capsule_nexus::Output> {
             match self {
                 Self::Answered(response) => Some(response),
                 Self::Subscribe(_) => None,
@@ -1829,9 +1829,9 @@ mod tests {
         fn with_emitter(paths: &SocketPaths, emitter: Arc<dyn ExternalEmitter>) -> Dispatcher;
         fn dispatch(
             &self,
-            query: signal_capsule_nexus::Query,
+            query: signal_capsule_nexus::Input,
             configuration: Arc<ReadyCoreConfiguration>,
-        ) -> signal_capsule_nexus::Response;
+        ) -> signal_capsule_nexus::Output;
         fn subscription_source_count(&self) -> usize;
     }
 
@@ -1852,9 +1852,9 @@ mod tests {
 
         fn dispatch(
             &self,
-            query: signal_capsule_nexus::Query,
+            query: signal_capsule_nexus::Input,
             configuration: Arc<ReadyCoreConfiguration>,
-        ) -> signal_capsule_nexus::Response {
+        ) -> signal_capsule_nexus::Output {
             self.dispatch_as(
                 shared_translator::Principal::Login(shared_translator::UserId(i64::from(
                     nix::unistd::getuid().as_raw(),
@@ -1916,7 +1916,7 @@ mod tests {
 
     #[test]
     fn peer_setting_captures_process_lifetime_and_remove_is_typed() {
-        use core_meta_capsule_nexus::{CoreSet, Response};
+        use core_meta_capsule_nexus::{CoreSet, Output};
         use shared_translator::{PeerBinding, PeerId, PeerIdentity, ProcessId, UserId};
 
         let store = ConfigurationStore::default();
@@ -1930,7 +1930,7 @@ mod tests {
         };
         assert!(matches!(
             store.configure(CoreSet::Peer(binding), || Ok(())),
-            Response::Configured(_)
+            Output::Configured(_)
         ));
         assert_eq!(
             store.peer_for(&shared_translator::Caller {
@@ -1941,11 +1941,11 @@ mod tests {
         );
         assert!(matches!(
             store.configure(CoreSet::RemovePeer(peer_id.clone()), || Ok(())),
-            Response::Configured(_)
+            Output::Configured(_)
         ));
         assert_eq!(
             store.configure(CoreSet::RemovePeer(peer_id.clone()), || Ok(())),
-            Response::ConfigureRefused(
+            Output::ConfigureRefused(
                 meta_signal_capsule_nexus::ConfigurationRefusal::UnknownPeer(peer_id)
             )
         );
@@ -1970,7 +1970,7 @@ mod tests {
                 peer_id,
                 peer_identity: identity.clone(),
             }), || Ok(())),
-            core_meta_capsule_nexus::Response::Configured(_)
+            core_meta_capsule_nexus::Output::Configured(_)
         ));
         child.kill().expect("terminate fixture child");
         child.wait().expect("reap fixture child");
@@ -2023,11 +2023,11 @@ mod tests {
                 process_id: ProcessId(i64::from(std::process::id())),
             },
         };
-        assert!(matches!(store.configure(CoreSet::Peer(binding.clone()), || Ok(())), core_meta_capsule_nexus::Response::Configured(_)));
+        assert!(matches!(store.configure(CoreSet::Peer(binding.clone()), || Ok(())), core_meta_capsule_nexus::Output::Configured(_)));
         let queue = Arc::new(SubscriberQueue::new(1));
         assert!(store.register_peer_subscriber(&peer_id, 1, &queue));
         assert!(queue.is_open());
-        assert!(matches!(store.configure(CoreSet::Peer(binding), || Ok(())), core_meta_capsule_nexus::Response::Configured(_)));
+        assert!(matches!(store.configure(CoreSet::Peer(binding), || Ok(())), core_meta_capsule_nexus::Output::Configured(_)));
         assert!(!queue.is_open());
     }
 
@@ -2042,13 +2042,13 @@ mod tests {
             process_id: ProcessId(i64::from(std::process::id())),
         };
         let binding = PeerBinding { peer_id: peer_id.clone(), peer_identity: identity.clone() };
-        assert!(matches!(store.configure(CoreSet::Peer(binding.clone()), || Ok(())), core_meta_capsule_nexus::Response::Configured(_)));
+        assert!(matches!(store.configure(CoreSet::Peer(binding.clone()), || Ok(())), core_meta_capsule_nexus::Output::Configured(_)));
         let caller = shared_translator::Caller {
             user_id: identity.user_id,
             process_id: identity.process_id,
         };
         let (_, old_generation) = store.peer_for(&caller).expect("first binding admitted");
-        assert!(matches!(store.configure(CoreSet::Peer(binding), || Ok(())), core_meta_capsule_nexus::Response::Configured(_)));
+        assert!(matches!(store.configure(CoreSet::Peer(binding), || Ok(())), core_meta_capsule_nexus::Output::Configured(_)));
         let stale = Arc::new(SubscriberQueue::new(1));
         assert!(!store.register_peer_subscriber(&peer_id, old_generation, &stale));
         assert!(!stale.is_open());
@@ -2077,7 +2077,7 @@ mod tests {
         };
         assert!(matches!(
             store.configure(CoreSet::Peer(binding.clone()), || Ok(())),
-            core_meta_capsule_nexus::Response::Configured(_)
+            core_meta_capsule_nexus::Output::Configured(_)
         ));
         let caller = shared_translator::Caller {
             user_id: identity.user_id,
@@ -2124,7 +2124,7 @@ mod tests {
         assert!(registration.join().expect("registration thread"));
         assert!(matches!(
             observed.recv_timeout(Duration::from_secs(1)).expect("rebind completed"),
-            core_meta_capsule_nexus::Response::Configured(_)
+            core_meta_capsule_nexus::Output::Configured(_)
         ));
         rebinding.join().expect("rebind thread");
         assert!(!stale.is_open(), "rebind closes the just-registered old generation");
@@ -2165,7 +2165,7 @@ mod tests {
             assert_eq!(request.lane, Lane::EmissionSignal);
             assert_eq!(request.kind, Kind::Request);
             std::thread::sleep(Duration::from_millis(100));
-            let answer = emission_capsule_nexus::Response::Emitted(ExternalOutcome::Started(
+            let answer = emission_capsule_nexus::Output::Emitted(ExternalOutcome::Started(
                 signal_capsule_nexus::State::Idle,
             ))
             .signalize()
@@ -2217,7 +2217,7 @@ mod tests {
     fn four_unowned_mutations_stop_before_the_emitter() {
         use signal_capsule_nexus::{
             AgentKind, AgentName, Command, Executable, Keys, Label, Press_Data, Program,
-            Prompt_Data, Query, Start_Data, Text,
+            Prompt_Data, Input, Start_Data, Text,
         };
         let emitter = Arc::new(CountingEmitter(std::sync::atomic::AtomicUsize::new(0)));
         let dispatcher = Dispatcher::with_emitter(&test_paths(), emitter.clone());
@@ -2230,28 +2230,28 @@ mod tests {
             string_vector: Vec::new(),
         };
         let queries = [
-            Query::Start(Start_Data {
+            Input::Start(Start_Data {
                 pane: pane.clone(),
                 command,
                 label: Label("label".into()),
             }),
-            Query::Prompt(Prompt_Data {
+            Input::Prompt(Prompt_Data {
                 pane: pane.clone(),
                 text: Text("hello".into()),
             }),
-            Query::Press(Press_Data {
+            Input::Press(Press_Data {
                 pane: pane.clone(),
                 keys: Keys(vec!["x".into()]),
             }),
-            Query::Close(pane),
+            Input::Close(pane),
         ];
         for query in queries {
             let response = dispatcher.dispatch(query, Arc::clone(&configuration));
             let outcome = match response {
-                signal_capsule_nexus::Response::Started(outcome)
-                | signal_capsule_nexus::Response::Prompted(outcome)
-                | signal_capsule_nexus::Response::Pressed(outcome)
-                | signal_capsule_nexus::Response::Closed(outcome) => outcome,
+                signal_capsule_nexus::Output::Started(outcome)
+                | signal_capsule_nexus::Output::Prompted(outcome)
+                | signal_capsule_nexus::Output::Pressed(outcome)
+                | signal_capsule_nexus::Output::Closed(outcome) => outcome,
                 _ => panic!("mutation response"),
             };
             assert!(matches!(outcome, signal_capsule_nexus::Outcome::Unknown(_)));
@@ -2264,12 +2264,12 @@ mod tests {
         let emitter = Arc::new(CountingEmitter(std::sync::atomic::AtomicUsize::new(0)));
         let dispatcher = Dispatcher::with_emitter(&test_paths(), emitter.clone());
         let response = dispatcher.dispatch(
-            signal_capsule_nexus::Query::List(signal_capsule_nexus::Session("empty".into())),
+            signal_capsule_nexus::Input::List(signal_capsule_nexus::Session("empty".into())),
             test_configuration(),
         );
         assert!(matches!(
             response,
-            signal_capsule_nexus::Response::Listed(signal_capsule_nexus::Outcome::Listed(ref panes)) if panes.is_empty()
+            signal_capsule_nexus::Output::Listed(signal_capsule_nexus::Outcome::Listed(ref panes)) if panes.is_empty()
         ));
         assert_eq!(emitter.0.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
@@ -2333,7 +2333,7 @@ mod tests {
     #[test]
     fn stale_list_finishing_after_start_preserves_started_state() {
         use signal_capsule_nexus::{
-            AgentKind, AgentName, Command, Executable, Label, Name, Program, Query, Root,
+            AgentKind, AgentName, Command, Executable, Label, Name, Program, Input, Root,
             Start_Data, Value, Variable, Workspace,
         };
         let pane = signal_capsule_nexus::Pane {
@@ -2350,7 +2350,7 @@ mod tests {
         let dispatcher = Arc::new(Dispatcher::with_emitter(&test_paths(), emitter));
         let configuration = test_configuration();
         let created = dispatcher.dispatch(
-            Query::Create(Workspace {
+            Input::Create(Workspace {
                 session: pane.session.clone(),
                 root: Root("/tmp".into()),
                 variable_vector: vec![Variable {
@@ -2362,20 +2362,20 @@ mod tests {
         );
         assert!(matches!(
             created,
-            signal_capsule_nexus::Response::Created(signal_capsule_nexus::Outcome::Created(_))
+            signal_capsule_nexus::Output::Created(signal_capsule_nexus::Outcome::Created(_))
         ));
 
         let listing_dispatcher = Arc::clone(&dispatcher);
         let listing_configuration = Arc::clone(&configuration);
         let session = pane.session.clone();
         let listing = std::thread::spawn(move || {
-            listing_dispatcher.dispatch(Query::List(session), listing_configuration)
+            listing_dispatcher.dispatch(Input::List(session), listing_configuration)
         });
         started_rx
             .recv()
             .expect("list entered external observation");
         let started = dispatcher.dispatch(
-            Query::Start(Start_Data {
+            Input::Start(Start_Data {
                 pane: pane.clone(),
                 command: Command {
                     agent_name: AgentName("probe".into()),
@@ -2389,11 +2389,11 @@ mod tests {
         );
         assert!(matches!(
             started,
-            signal_capsule_nexus::Response::Started(signal_capsule_nexus::Outcome::Done)
+            signal_capsule_nexus::Output::Started(signal_capsule_nexus::Outcome::Done)
         ));
         release_tx.send(()).expect("release stale list");
         let listed = listing.join().expect("listing thread");
-        let signal_capsule_nexus::Response::Listed(signal_capsule_nexus::Outcome::Listed(known)) =
+        let signal_capsule_nexus::Output::Listed(signal_capsule_nexus::Outcome::Listed(known)) =
             listed
         else {
             panic!("complete list");
@@ -2444,7 +2444,7 @@ mod tests {
 
     #[test]
     fn lost_creation_result_is_adopted_once_without_a_second_create() {
-        use signal_capsule_nexus::{Name, Outcome, Query, Response, Root, Value, Variable, Workspace};
+        use signal_capsule_nexus::{Name, Outcome, Input, Output, Root, Value, Variable, Workspace};
         let pane = signal_capsule_nexus::Pane {
             session: signal_capsule_nexus::Session("reconcile".into()),
             pane_id: signal_capsule_nexus::PaneId("pane".into()),
@@ -2458,7 +2458,7 @@ mod tests {
         let dispatcher = Dispatcher::with_emitter(&test_paths(), emitter.clone());
         let configuration = test_configuration();
         let created = dispatcher.dispatch(
-            Query::Create(Workspace {
+            Input::Create(Workspace {
                 session: pane.session.clone(),
                 root: Root("/tmp/reconcile".into()),
                 variable_vector: vec![Variable {
@@ -2468,16 +2468,16 @@ mod tests {
             }),
             Arc::clone(&configuration),
         );
-        assert!(matches!(created, Response::Created(Outcome::Uncertain)));
+        assert!(matches!(created, Output::Created(Outcome::Uncertain)));
 
         for _ in 0..2 {
             let listed = dispatcher.dispatch(
-                Query::List(pane.session.clone()),
+                Input::List(pane.session.clone()),
                 Arc::clone(&configuration),
             );
             assert!(matches!(
                 listed,
-                Response::Listed(Outcome::Listed(ref known))
+                Output::Listed(Outcome::Listed(ref known))
                     if known.len() == 1 && known[0].pane == pane
             ));
         }
@@ -2486,7 +2486,7 @@ mod tests {
 
     #[test]
     fn unrelated_workspace_marker_is_not_adopted() {
-        use signal_capsule_nexus::{Outcome, Query, Response, Root, Workspace};
+        use signal_capsule_nexus::{Outcome, Input, Output, Root, Workspace};
         let pane = signal_capsule_nexus::Pane {
             session: signal_capsule_nexus::Session("unrelated".into()),
             pane_id: signal_capsule_nexus::PaneId("pane".into()),
@@ -2501,18 +2501,18 @@ mod tests {
         let configuration = test_configuration();
         assert!(matches!(
             dispatcher.dispatch(
-                Query::Create(Workspace {
+                Input::Create(Workspace {
                     session: pane.session.clone(),
                     root: Root("/tmp/unrelated".into()),
                     variable_vector: Vec::new(),
                 }),
                 Arc::clone(&configuration),
             ),
-            Response::Created(Outcome::Uncertain)
+            Output::Created(Outcome::Uncertain)
         ));
         assert!(matches!(
-            dispatcher.dispatch(Query::List(pane.session), configuration),
-            Response::Listed(Outcome::Listed(ref known)) if known.is_empty()
+            dispatcher.dispatch(Input::List(pane.session), configuration),
+            Output::Listed(Outcome::Listed(ref known)) if known.is_empty()
         ));
         assert_eq!(emitter.creates.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
@@ -2575,7 +2575,7 @@ mod tests {
         signal_capsule_nexus::Pane,
     ) {
         use signal_capsule_nexus::{
-            AgentKind, AgentName, Command, Executable, Label, Program, Query, Root, Start_Data,
+            AgentKind, AgentName, Command, Executable, Label, Program, Input, Root, Start_Data,
             Workspace,
         };
         let pane = signal_capsule_nexus::Pane {
@@ -2592,7 +2592,7 @@ mod tests {
         let dispatcher = Arc::new(Dispatcher::with_emitter(&test_paths(), emitter.clone()));
         let configuration = test_configuration();
         let created = dispatcher.dispatch(
-            Query::Create(Workspace {
+            Input::Create(Workspace {
                 session: pane.session.clone(),
                 root: Root("/tmp".into()),
                 variable_vector: Vec::new(),
@@ -2601,10 +2601,10 @@ mod tests {
         );
         assert!(matches!(
             created,
-            signal_capsule_nexus::Response::Created(signal_capsule_nexus::Outcome::Created(_))
+            signal_capsule_nexus::Output::Created(signal_capsule_nexus::Outcome::Created(_))
         ));
         let started = dispatcher.dispatch(
-            Query::Start(Start_Data {
+            Input::Start(Start_Data {
                 pane: pane.clone(),
                 command: Command {
                     agent_name: AgentName("probe".into()),
@@ -2618,41 +2618,41 @@ mod tests {
         );
         assert!(matches!(
             started,
-            signal_capsule_nexus::Response::Started(signal_capsule_nexus::Outcome::Done)
+            signal_capsule_nexus::Output::Started(signal_capsule_nexus::Outcome::Done)
         ));
         (dispatcher, emitter, pane)
     }
 
     fn read_subscription(
         stream: &mut std::os::unix::net::UnixStream,
-    ) -> capsule_nexus_wire::public_call::Response {
+    ) -> capsule_nexus_wire::public_call::Output {
         use signal::{FrameReading, Restorable, Signal};
         let body = stream
             .read_frame(signal::FrameCapacity::from(4096))
             .expect("subscription frame");
-        Signal::<capsule_nexus_wire::public_call::Response>::from(Vec::from(body))
+        Signal::<capsule_nexus_wire::public_call::Output>::from(Vec::from(body))
             .restore()
             .expect("typed response")
     }
 
     #[test]
     fn ownership_is_partitioned_by_principal() {
-        use signal_capsule_nexus::{Outcome, Query, Response};
+        use signal_capsule_nexus::{Outcome, Input, Output};
         let (dispatcher, emitter, pane) = started_dispatcher(Vec::new());
         let other = shared_translator::Principal::Peer(shared_translator::PeerId("other".into()));
         assert_eq!(
             dispatcher.dispatch_as(
                 other.clone(),
-                Query::List(pane.session.clone()),
+                Input::List(pane.session.clone()),
                 test_configuration(),
             ).answered().expect("List is answered"),
-            Response::Listed(Outcome::Listed(Vec::new()))
+            Output::Listed(Outcome::Listed(Vec::new()))
         );
         let before = emitter.list_count.load(std::sync::atomic::Ordering::SeqCst);
         assert_eq!(
-            dispatcher.dispatch_as(other, Query::Close(pane.clone()), test_configuration())
+            dispatcher.dispatch_as(other, Input::Close(pane.clone()), test_configuration())
                 .answered().expect("Close is answered"),
-            Response::Closed(Outcome::Unknown(pane))
+            Output::Closed(Outcome::Unknown(pane))
         );
         assert_eq!(
             emitter.list_count.load(std::sync::atomic::Ordering::SeqCst),
@@ -2679,13 +2679,13 @@ mod tests {
             .subscribe(server, pane.session.clone(), test_configuration())
             .expect("subscribe");
         assert!(
-            matches!(read_subscription(&mut client), capsule_nexus_wire::public_call::Response::Answered(ref output) if matches!(output.0, signal_capsule_nexus::Response::Subscribed(signal_capsule_nexus::Outcome::Done)))
+            matches!(read_subscription(&mut client), capsule_nexus_wire::public_call::Output::Answered(ref output) if matches!(output.0, signal_capsule_nexus::Output::Subscribed(signal_capsule_nexus::Outcome::Done)))
         );
         assert!(
-            matches!(read_subscription(&mut client), capsule_nexus_wire::public_call::Response::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Response::Changed(change) if change.pane == pane && change.state == signal_capsule_nexus::State::Busy))
+            matches!(read_subscription(&mut client), capsule_nexus_wire::public_call::Output::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Output::Changed(change) if change.pane == pane && change.state == signal_capsule_nexus::State::Busy))
         );
         assert!(
-            matches!(read_subscription(&mut client), capsule_nexus_wire::public_call::Response::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Response::Changed(change) if change.pane == pane && change.state == signal_capsule_nexus::State::Dead))
+            matches!(read_subscription(&mut client), capsule_nexus_wire::public_call::Output::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Output::Changed(change) if change.pane == pane && change.state == signal_capsule_nexus::State::Dead))
         );
         client
             .set_read_timeout(Some(Duration::from_millis(35)))
@@ -2761,7 +2761,7 @@ mod tests {
     #[test]
     fn late_subscriber_cursor_does_not_repeat_its_current_state() {
         use emission_capsule_nexus::ExternalOutcome;
-        use signal_capsule_nexus::{AgentKind, AgentName, Command, Executable, Label, Program, Query, Start_Data};
+        use signal_capsule_nexus::{AgentKind, AgentName, Command, Executable, Label, Program, Input, Start_Data};
         let pane = pane_for("subscription", "pane");
         let (dispatcher, _emitter, _) = started_dispatcher(vec![
             ExternalOutcome::Agents(vec![agent_listing(&pane, signal_capsule_nexus::State::Idle)]),
@@ -2780,9 +2780,9 @@ mod tests {
         dispatcher.subscribe(server_a, pane.session.clone(), Arc::clone(&slow)).expect("subscribe a");
         let _ = read_subscription(&mut client_a); // acknowledgement
         let _ = read_subscription(&mut client_a); // current Busy
-        assert!(matches!(read_subscription(&mut client_a), capsule_nexus_wire::public_call::Response::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Response::Changed(change) if change.state == signal_capsule_nexus::State::Idle)));
+        assert!(matches!(read_subscription(&mut client_a), capsule_nexus_wire::public_call::Output::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Output::Changed(change) if change.state == signal_capsule_nexus::State::Idle)));
 
-        let started = dispatcher.dispatch(Query::Start(Start_Data {
+        let started = dispatcher.dispatch(Input::Start(Start_Data {
             pane: pane.clone(),
             command: Command {
                 agent_name: AgentName("probe".into()),
@@ -2792,13 +2792,13 @@ mod tests {
             },
             label: Label("flow".into()),
         }), Arc::clone(&slow));
-        assert!(matches!(started, signal_capsule_nexus::Response::Started(signal_capsule_nexus::Outcome::Done)));
+        assert!(matches!(started, signal_capsule_nexus::Output::Started(signal_capsule_nexus::Outcome::Done)));
         let (server_b, mut client_b) = std::os::unix::net::UnixStream::pair().expect("pair b");
         client_b.set_read_timeout(Some(Duration::from_millis(300))).expect("timeout b");
         dispatcher.subscribe(server_b, pane.session.clone(), Arc::clone(&slow)).expect("subscribe b");
         let _ = read_subscription(&mut client_b); // acknowledgement
-        assert!(matches!(read_subscription(&mut client_b), capsule_nexus_wire::public_call::Response::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Response::Changed(change) if change.state == signal_capsule_nexus::State::Busy)));
-        assert!(matches!(read_subscription(&mut client_a), capsule_nexus_wire::public_call::Response::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Response::Changed(change) if change.state == signal_capsule_nexus::State::Busy)));
+        assert!(matches!(read_subscription(&mut client_b), capsule_nexus_wire::public_call::Output::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Output::Changed(change) if change.state == signal_capsule_nexus::State::Busy)));
+        assert!(matches!(read_subscription(&mut client_a), capsule_nexus_wire::public_call::Output::Answered(ref output) if matches!(&output.0, signal_capsule_nexus::Output::Changed(change) if change.state == signal_capsule_nexus::State::Busy)));
         client_b.set_read_timeout(Some(Duration::from_millis(35))).expect("short timeout b");
         use signal::FrameReading;
         assert!(client_b.read_frame(signal::FrameCapacity::from(4096)).is_err(), "late subscriber must not receive its current Busy twice");
@@ -2832,7 +2832,7 @@ mod tests {
     #[test]
     fn successful_close_delivers_one_dead_only_to_current_subscribers() {
         use signal::FrameReading;
-        use signal_capsule_nexus::{Outcome, Query, Response, State};
+        use signal_capsule_nexus::{Outcome, Input, Output, State};
         let (dispatcher, _emitter, pane) = started_dispatcher(Vec::new());
         let configuration = test_configuration();
         let (server, mut client) = std::os::unix::net::UnixStream::pair().expect("pair");
@@ -2841,13 +2841,13 @@ mod tests {
         let _ = read_subscription(&mut client);
         let _ = read_subscription(&mut client);
         assert!(matches!(
-            dispatcher.dispatch(Query::Close(pane.clone()), Arc::clone(&configuration)),
-            Response::Closed(Outcome::Done)
+            dispatcher.dispatch(Input::Close(pane.clone()), Arc::clone(&configuration)),
+            Output::Closed(Outcome::Done)
         ));
         assert!(matches!(
             read_subscription(&mut client),
-            capsule_nexus_wire::public_call::Response::Answered(ref output)
-                if matches!(&output.0, Response::Changed(change) if change.pane == pane && change.state == State::Dead)
+            capsule_nexus_wire::public_call::Output::Answered(ref output)
+                if matches!(&output.0, Output::Changed(change) if change.pane == pane && change.state == State::Dead)
         ));
         client.set_read_timeout(Some(Duration::from_millis(40))).expect("short timeout");
         assert!(client.read_frame(signal::FrameCapacity::from(4096)).is_err());
@@ -2863,7 +2863,7 @@ mod tests {
     fn externally_absent_owned_pane_is_released_and_publishes_one_dead() {
         use emission_capsule_nexus::ExternalOutcome;
         use signal_capsule_nexus::{
-            ErrorCode, Message, Outcome, Query, Refusal, Response, State,
+            ErrorCode, Message, Outcome, Input, Refusal, Output, State,
         };
         let (dispatcher, emitter, pane) = started_dispatcher(Vec::new());
         *emitter.close_outcome.lock().expect("close outcome") = Some(
@@ -2885,24 +2885,24 @@ mod tests {
         let _ = read_subscription(&mut client);
 
         assert!(matches!(
-            dispatcher.dispatch(Query::Close(pane.clone()), Arc::clone(&configuration)),
-            Response::Closed(Outcome::Done)
+            dispatcher.dispatch(Input::Close(pane.clone()), Arc::clone(&configuration)),
+            Output::Closed(Outcome::Done)
         ));
         assert!(matches!(
             read_subscription(&mut client),
-            capsule_nexus_wire::public_call::Response::Answered(ref output)
-                if matches!(&output.0, Response::Changed(change) if change.pane == pane && change.state == State::Dead)
+            capsule_nexus_wire::public_call::Output::Answered(ref output)
+                if matches!(&output.0, Output::Changed(change) if change.pane == pane && change.state == State::Dead)
         ));
         assert!(matches!(
-            dispatcher.dispatch(Query::List(pane.session), configuration),
-            Response::Listed(Outcome::Listed(ref known)) if known.is_empty()
+            dispatcher.dispatch(Input::List(pane.session), configuration),
+            Output::Listed(Outcome::Listed(ref known)) if known.is_empty()
         ));
     }
 
     #[test]
     fn another_close_refusal_retains_ownership_and_publishes_no_dead() {
         use emission_capsule_nexus::ExternalOutcome;
-        use signal_capsule_nexus::{ErrorCode, Message, Outcome, Query, Refusal, Response};
+        use signal_capsule_nexus::{ErrorCode, Message, Outcome, Input, Refusal, Output};
         let (dispatcher, emitter, pane) = started_dispatcher(Vec::new());
         *emitter.close_outcome.lock().expect("close outcome") = Some(
             ExternalOutcome::Refused(Refusal {
@@ -2923,12 +2923,12 @@ mod tests {
         let _ = read_subscription(&mut client);
 
         assert!(matches!(
-            dispatcher.dispatch(Query::Close(pane.clone()), Arc::clone(&configuration)),
-            Response::Closed(Outcome::Refused(ref refusal)) if refusal.error_code.0 == "workspace_busy"
+            dispatcher.dispatch(Input::Close(pane.clone()), Arc::clone(&configuration)),
+            Output::Closed(Outcome::Refused(ref refusal)) if refusal.error_code.0 == "workspace_busy"
         ));
         assert!(matches!(
-            dispatcher.dispatch(Query::List(pane.session), configuration),
-            Response::Listed(Outcome::Listed(ref known)) if known.len() == 1
+            dispatcher.dispatch(Input::List(pane.session), configuration),
+            Output::Listed(Outcome::Listed(ref known)) if known.len() == 1
         ));
     }
 
@@ -2936,7 +2936,7 @@ mod tests {
     fn stale_poll_finishing_after_close_cannot_reopen_the_pane() {
         use signal::FrameReading;
         use signal_capsule_nexus::{
-            AgentKind, AgentName, Command, Executable, Label, Outcome, Program, Query, Response,
+            AgentKind, AgentName, Command, Executable, Label, Outcome, Program, Input, Output,
             Root, Start_Data, State, Workspace,
         };
         let pane = pane_for("stale-close", "pane");
@@ -2951,18 +2951,18 @@ mod tests {
         let configuration = test_configuration();
         assert!(matches!(
             dispatcher.dispatch(
-                Query::Create(Workspace {
+                Input::Create(Workspace {
                     session: pane.session.clone(),
                     root: Root("/tmp".into()),
                     variable_vector: Vec::new(),
                 }),
                 Arc::clone(&configuration),
             ),
-            Response::Created(Outcome::Created(_))
+            Output::Created(Outcome::Created(_))
         ));
         assert!(matches!(
             dispatcher.dispatch(
-                Query::Start(Start_Data {
+                Input::Start(Start_Data {
                     pane: pane.clone(),
                     command: Command {
                         agent_name: AgentName("probe".into()),
@@ -2974,7 +2974,7 @@ mod tests {
                 }),
                 Arc::clone(&configuration),
             ),
-            Response::Started(Outcome::Done)
+            Output::Started(Outcome::Done)
         ));
 
         let (server, mut client) = std::os::unix::net::UnixStream::pair().expect("pair");
@@ -2987,13 +2987,13 @@ mod tests {
         poll_started_rx.recv().expect("old poll reached external List");
 
         assert!(matches!(
-            dispatcher.dispatch(Query::Close(pane.clone()), Arc::clone(&configuration)),
-            Response::Closed(Outcome::Done)
+            dispatcher.dispatch(Input::Close(pane.clone()), Arc::clone(&configuration)),
+            Output::Closed(Outcome::Done)
         ));
         assert!(matches!(
             read_subscription(&mut client),
-            capsule_nexus_wire::public_call::Response::Answered(ref output)
-                if matches!(&output.0, Response::Changed(change) if change.pane == pane && change.state == State::Dead)
+            capsule_nexus_wire::public_call::Output::Answered(ref output)
+                if matches!(&output.0, Output::Changed(change) if change.pane == pane && change.state == State::Dead)
         ));
         release_poll_tx.send(()).expect("release stale poll");
 
@@ -3006,27 +3006,27 @@ mod tests {
 
     #[test]
     fn bounded_subscriber_queue_disconnects_only_the_overflowing_peer() {
-        use signal_capsule_nexus::{Outcome, Response};
+        use signal_capsule_nexus::{Outcome, Output};
         let slow = SubscriberQueue::new(1);
         let healthy = SubscriberQueue::new(2);
-        assert!(slow.enqueue(Response::Subscribed(Outcome::Done)));
-        assert!(!slow.enqueue(Response::Subscribed(Outcome::Done)));
+        assert!(slow.enqueue(Output::Subscribed(Outcome::Done)));
+        assert!(!slow.enqueue(Output::Subscribed(Outcome::Done)));
         assert!(!slow.is_open());
-        assert!(healthy.enqueue(Response::Subscribed(Outcome::Done)));
+        assert!(healthy.enqueue(Output::Subscribed(Outcome::Done)));
         assert!(healthy.is_open());
     }
 
     #[test]
     fn lowering_subscriber_capacity_disconnects_only_queues_above_the_new_bound() {
-        use signal_capsule_nexus::{Outcome, Response};
+        use signal_capsule_nexus::{Outcome, Output};
         let store = ConfigurationStore::default();
         let over = Arc::new(SubscriberQueue::new(3));
         let within = Arc::new(SubscriberQueue::new(3));
         store.register_subscriber(&over);
         store.register_subscriber(&within);
-        assert!(over.enqueue(Response::Subscribed(Outcome::Done)));
-        assert!(over.enqueue(Response::Subscribed(Outcome::Done)));
-        assert!(within.enqueue(Response::Subscribed(Outcome::Done)));
+        assert!(over.enqueue(Output::Subscribed(Outcome::Done)));
+        assert!(over.enqueue(Output::Subscribed(Outcome::Done)));
+        assert!(within.enqueue(Output::Subscribed(Outcome::Done)));
         store.apply_subscriber_capacity(1);
         assert!(!over.is_open());
         assert!(within.is_open());

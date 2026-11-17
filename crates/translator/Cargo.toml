@@ -1,6 +1,6 @@
 [package]
 name = "capsule-nexus-translator"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 publish = false
 
@@ -13,18 +13,18 @@ core-meta-capsule-nexus = { path = "../core-meta" }
 nix = { version = "0.30", features = ["fs", "poll", "process", "signal", "socket", "user"] }
 rustix = { version = "1", features = ["process", "rand"] }
 rkyv = { version = "0.8", features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
-signal = { git = "https://github.com/LiGoldragon/signal", rev = "6d4eb74" }
+signal = { git = "https://github.com/LiGoldragon/signal", rev = "b145ddb" }
 protos = { git = "https://github.com/LiGoldragon/protos", rev = "c93b598", optional = true }
 datom-codec = { git = "https://github.com/LiGoldragon/datom-codec", rev = "09a0526", optional = true }
 
 [dependencies.signal-capsule-nexus]
 git = "https://github.com/LiGoldragon/signal-capsule-nexus"
-rev = "dc941e72a31f7084f80b6fa8fe9aa49963acb4a1"
+rev = "537fd4eb51034237d28d700706b3214a658f3d13"
 
 [dependencies.shared-translator]
 package = "translator"
 git = "https://github.com/LiGoldragon/translator"
-rev = "abc89b9"
+rev = "2310db3"
 features = ["unix"]
 
 
@@ -40,7 +40,7 @@ path = "../emission"
 [dependencies.meta-signal-capsule-nexus]
 package = "meta-signal-capsule-nexus"
 git = "https://github.com/LiGoldragon/meta-signal-capsule-nexus"
-rev = "b8fde9e2be92f75945a208208d4b93d6e5fd7e69"
+rev = "0a9e3e0a91836ac178f489d633ea9ee288975ba4"
 features = ["datom"]
 
 [[bin]]

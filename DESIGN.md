@@ -7,10 +7,8 @@ Datom, JSON, command-line, or process dependency. The translator owns the
 external herdr JSON and command line. `ethos/emission.ethos` is temporarily a
 Signal root because ethos-zero does not yet check an Emission root.
 
-Ethos-zero currently emits the Rust root names `Query` and `Response` for a
-Signal. The vision calls these roots Input and Output. This implementation
-keeps the generated names rather than hand-editing generated code; the naming
-difference is an audited generator limitation.
+Ethos-zero emits the Rust root names `Input` and `Output` for a Signal, as the
+vision calls them, with its `Answering` and `Answerable` traits beside them.
 
 ## Memory
 

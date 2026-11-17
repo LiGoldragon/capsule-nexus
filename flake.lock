@@ -6,11 +6,11 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1794686749,
-        "narHash": "sha256-9eFN/uMp2EozJSZkwdbXqP13Dotbj/eTi3UI3yd/ES0=",
+        "lastModified": 1794883490,
+        "narHash": "sha256-CJEUogAWXE4zv7DPsUqEunfUU238z5uElkJXc29ldqk=",
         "owner": "LiGoldragon",
         "repo": "build-base",
-        "rev": "13319ba1e92fd85fc9b7c646f55d57875ae52b3d",
+        "rev": "ab644654fd7183c8c0e422b51437901d27a521e2",
         "type": "github"
       },
       "original": {
@@ -44,11 +44,11 @@
         "protos": "protos"
       },
       "locked": {
-        "lastModified": 1794277716,
-        "narHash": "sha256-wbHITBEhDb1teeoEiCnxo66VQR4J42VKOTZNallViFA=",
+        "lastModified": 1794880330,
+        "narHash": "sha256-rF52q4QMnRebg4YpO+VRJQpKDBGNJSap5VD5yDOPs0c=",
         "owner": "LiGoldragon",
         "repo": "ethos-zero",
-        "rev": "18e2ea6bba64ce8bc478941ca4e16d134c76d04f",
+        "rev": "b97d9526909a1ecebf61339f5723eaca53de5dca",
         "type": "github"
       },
       "original": {
