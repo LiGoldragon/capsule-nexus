@@ -834,6 +834,9 @@ pub struct Capsule {
     next_reservation: u64,
     instance_id: signal_capsule_nexus::InstanceId,
     next_creation_sequence: i64,
+    /// The subscriber capacity every new Publisher is created at, set by the
+    /// Configure that resizes the existing ones; the capacity's one holder.
+    subscriber_capacity: Option<nexus::Capacity>,
 }
 
 /// What a listing captures before it is emitted: each owned pane's revision,
@@ -862,6 +865,7 @@ impl Capsule {
             next_reservation: 1,
             instance_id,
             next_creation_sequence: 1,
+            subscriber_capacity: None,
         }
     }
 
@@ -1076,16 +1080,24 @@ impl Capsule {
         self.reconciled(session, captured, pending, adoption, external);
     }
 
-    /// Opens a stream on the session's Publisher. The stream holds its place
-    /// among the session's streams until it is dropped.
+    /// Opens a stream on the session's Publisher, a new one made at the
+    /// subscriber capacity the actor holds. The stream holds its place among
+    /// the session's streams until it is dropped.
     #[message(ctx)]
     fn subscribe(
         &mut self,
         session: signal_capsule_nexus::Session,
-        capacity: nexus::Capacity,
         ctx: &mut kameo::message::Context<Self, Result<capsule_nexus_core::Subscription, signal_capsule_nexus::Outcome>>,
     ) -> Result<capsule_nexus_core::Subscription, signal_capsule_nexus::Outcome> {
         use futures_util::StreamExt;
+        let capacity = self.subscriber_capacity.ok_or_else(|| {
+            signal_capsule_nexus::Outcome::StoreRefused(signal_capsule_nexus::StoreRefusal {
+                memory_refusal: signal_capsule_nexus::MemoryRefusal(signal_capsule_nexus::Message(
+                    "subscriber capacity is not configured".into(),
+                )),
+                store_phase: signal_capsule_nexus::StorePhase::BeforeEmission,
+            })
+        })?;
         let capsule_nexus_core::Subscription { stream, feed } = self.core.subscribe(&session, capacity)?;
         let lease = StreamLease {
             capsule: ctx.actor_ref().clone(),
@@ -1108,10 +1120,12 @@ impl Capsule {
         })
     }
 
-    /// Moves every session's Publisher to the configured subscriber
-    /// capacity; each open stream follows it.
+    /// Holds the configured subscriber capacity for every Publisher made from
+    /// now on, and moves every session's Publisher to it; each open stream
+    /// follows it.
     #[message]
     fn resize_publishers(&mut self, capacity: nexus::Capacity) {
+        self.subscriber_capacity = Some(capacity);
         self.core.resize(capacity);
     }
 
@@ -1235,7 +1249,7 @@ impl Dispatcher {
         use signal_capsule_nexus::{Answer, Output};
         let attempt = match operation(query) {
             Ok(attempt) => attempt,
-            Err(session) => return self.open_subscription(session, &configuration),
+            Err(session) => return self.open_subscription(session),
         };
         let response = match attempt {
             Operation::Creating(workspace) => {
@@ -1409,16 +1423,9 @@ impl Dispatcher {
     /// Opens a stream on the session's Publisher, whoever asks: observing is
     /// open, acting stays the owner's. The stream that makes the Publisher
     /// starts the session's feed, which lives as long as the Publisher.
-    fn open_subscription(
-        &self,
-        session: signal_capsule_nexus::Session,
-        configuration: &ReadyCoreConfiguration,
-    ) -> signal_capsule_nexus::Answer {
+    fn open_subscription(&self, session: signal_capsule_nexus::Session) -> signal_capsule_nexus::Answer {
         use signal_capsule_nexus::{Answer, Output};
-        let capacity = nexus::Capacity(
-            i64::try_from(configuration.subscriber_capacity).expect("validated i64 subscriber capacity"),
-        );
-        match settled(self.capsule.ask(Subscribe { session: session.clone(), capacity }).blocking_send()) {
+        match settled(self.capsule.ask(Subscribe { session: session.clone() }).blocking_send()) {
             Ok(subscription) => {
                 if let Some(ended) = subscription.feed {
                     self.runtime.spawn(self.clone().feed(session, ended));
@@ -1900,7 +1907,6 @@ pub struct ReadyCoreConfiguration {
     pub start_timeout: Duration,
     pub frame_capacity_bytes: usize,
     pub transport_timeout: Duration,
-    pub subscriber_capacity: usize,
 }
 
 #[derive(Clone, Default)]
@@ -2058,13 +2064,12 @@ impl ConfigurationStore {
                 Some(start_timeout),
                 Some(frame_capacity_bytes),
                 Some(transport_timeout),
-                Some(subscriber_capacity),
+                Some(_),
             ) => Some(ReadyCoreConfiguration {
                 polling: *polling,
                 start_timeout: *start_timeout,
                 frame_capacity_bytes: *frame_capacity_bytes,
                 transport_timeout: *transport_timeout,
-                subscriber_capacity: *subscriber_capacity,
             }),
             _ => None,
         };
@@ -2209,9 +2214,24 @@ impl ConfigurationStore {
     }
 
     /// Tells the actor that holds the Publishers each subscriber capacity
-    /// configured from now on.
+    /// configured from now on, and the capacity configured before it.
     fn hold_publishers_in(&self, capsule: kameo::actor::ActorRef<Capsule>) {
-        let _ = self.capsule.set(capsule);
+        let _transaction = self
+            .configuration_transaction
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let configured = self
+            .partial
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .subscriber_capacity;
+        if self.capsule.set(capsule).is_ok() {
+            if let Some(capacity) = configured {
+                self.resize_publishers(nexus::Capacity(
+                    i64::try_from(capacity).expect("validated i64 subscriber capacity"),
+                ));
+            }
+        }
     }
 
     /// Moves every session's Publisher to the capacity, in the actor's turn.
@@ -2344,6 +2364,10 @@ mod tests {
                 test_runtime().handle().clone(),
             );
             dispatcher.emitter = emitter;
+            assert!(matches!(
+                dispatcher.configuration.configure(core_meta_capsule_nexus::CoreSet::SubscriberCapacity(8), || Ok(())),
+                core_meta_capsule_nexus::Output::Configured(_)
+            ));
             dispatcher
         }
 
@@ -2446,7 +2470,6 @@ mod tests {
             start_timeout: Duration::from_millis(20),
             frame_capacity_bytes: 4096,
             transport_timeout: Duration::from_millis(30),
-            subscriber_capacity: 8,
         })
     }
 
@@ -3395,7 +3418,6 @@ mod tests {
             start_timeout: Duration::from_millis(20),
             frame_capacity_bytes: 4096,
             transport_timeout: Duration::from_millis(30),
-            subscriber_capacity: 8,
         });
         *dispatcher.configuration.current.write().expect("configuration") = Some(Arc::clone(&slow));
         let mut client_a = dispatcher.subscribe(pane.session.clone(), Arc::clone(&slow));
@@ -3422,6 +3444,47 @@ mod tests {
     }
 
     #[test]
+    fn a_subscribe_configured_before_a_resize_opens_at_the_new_capacity() {
+        use futures_util::StreamExt;
+        use signal_capsule_nexus::State;
+        let (dispatcher, _emitter, pane) = started_dispatcher(Vec::new());
+        // The fixture configured capacity 8; a Subscribe whose caller read
+        // its configuration then still opens at what the actor holds now.
+        assert!(matches!(
+            dispatcher.configuration.configure(core_meta_capsule_nexus::CoreSet::SubscriberCapacity(1), || Ok(())),
+            core_meta_capsule_nexus::Output::Configured(_)
+        ));
+        let session = pane.session.clone();
+        let subscription = settled(dispatcher.capsule.ask(Subscribe { session: session.clone() }).blocking_send())
+            .expect("subscribes");
+        let mut stream = subscription.stream;
+        for state in [State::Idle, State::Busy] {
+            let (captured, pending, _) =
+                settled(dispatcher.capsule.ask(CaptureListing { session: session.clone() }).blocking_send())
+                    .expect("captures");
+            dispatcher
+                .capsule
+                .ask(FinishObservation {
+                    session: session.clone(),
+                    captured,
+                    pending,
+                    adoption: None,
+                    external: capsule_nexus_core::ExternalResult::Succeeded(vec![
+                        emission_capsule_nexus::PaneObservation { pane: pane.clone(), state },
+                    ]),
+                })
+                .blocking_send()
+                .expect("observes");
+        }
+        let (opened, second) = test_runtime().block_on(async { (stream.next().await, stream.next().await) });
+        assert!(matches!(opened, Some(signal::Frame::Opened(_))));
+        assert!(
+            matches!(second, Some(signal::Frame::Lagged(_))),
+            "two changes past a capacity of one lag the stream, got {second:?} instead of the old capacity's Changed"
+        );
+    }
+
+    #[test]
     fn active_subscription_reads_replaced_configuration() {
         let (dispatcher, emitter, pane) = started_dispatcher(Vec::new());
         let _client = dispatcher.subscribe(pane.session, test_configuration());
@@ -3433,7 +3496,6 @@ mod tests {
             start_timeout: Duration::from_millis(25),
             frame_capacity_bytes: 4096,
             transport_timeout: Duration::from_millis(40),
-            subscriber_capacity: 8,
         });
         *dispatcher.configuration.current.write().expect("configuration") = Some(replacement);
         let deadline = Instant::now() + Duration::from_millis(300);

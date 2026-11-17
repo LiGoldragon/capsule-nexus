@@ -64,9 +64,11 @@ The Nexus and translator each own a partial configuration. One flat typed
 `Set` validates and applies one field; refusal preserves the previous partial
 snapshot. The Nexus owns start, polling, frame-capacity, transport and
 subscriber-capacity limits; the subscriber capacity is the capacity a session's
-Publisher is made with, and a Configure of it resizes every session's Publisher
-in the actor's turn, each open stream following it: one more than the new
-capacity behind is handed `Lagged` with the panes as they stand and goes on.
+Publisher is made with, held by the Capsule actor alone: a Configure of it sets
+the actor's capacity and resizes every session's Publisher in the actor's turn,
+each open stream following it, so a Subscribe that read its configuration
+earlier still opens at the capacity held now. One more than the capacity behind
+is handed `Lagged` with the panes as they stand and goes on.
 The translator owns the herdr path, call timeout, output limit and text budget.
 Each process reports the fields it still awaits and becomes ready only when
 all of its fields are present and their cross-field constraints hold. Defaults

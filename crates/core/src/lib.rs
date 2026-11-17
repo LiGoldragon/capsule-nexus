@@ -34,6 +34,9 @@ pub enum ExternalResult<T> {
 pub trait Memory {
     fn owned(&self, pane: &Pane) -> Result<Option<OwnedPane>, MemoryRefusal>;
     fn owned_in_session(&self, session: &Session) -> Result<Vec<OwnedPane>, MemoryRefusal>;
+    /// The session's panes as a listing reconciles them: each pane's Known
+    /// after the reconciliation, its state as observed and its attempt
+    /// settled. [`Memory::reconcile_listing`] stores exactly these.
     fn project_listing(
         &self,
         session: &Session,
@@ -72,7 +75,8 @@ impl InMemory {
                     pane: owned.pane.clone(),
                     label_option: owned.label_option.clone(),
                     state: reconciled_state(owned, by_pane.get(&owned.pane).copied()),
-                    attempt: owned.attempt.clone(),
+                    // The listing settles every attempt.
+                    attempt: Attempt::Settled,
                 }
             })
             .collect()
@@ -127,15 +131,11 @@ impl Memory for InMemory {
         session: &Session,
         observed: &[PaneObservation],
     ) -> Answer {
-        let by_pane: HashMap<&Pane, &PaneObservation> =
-            observed.iter().map(|seen| (&seen.pane, seen)).collect();
-        for owned in self
-            .panes
-            .values_mut()
-            .filter(|owned| &owned.pane.session == session)
-        {
-            owned.state = reconciled_state(owned, by_pane.get(&owned.pane).copied());
-            owned.attempt = Attempt::Settled;
+        for known in self.project_listing(session, observed) {
+            if let Some(owned) = self.panes.get_mut(&known.pane) {
+                owned.state = known.state;
+                owned.attempt = known.attempt;
+            }
         }
         Answer::Succeeded
     }
@@ -460,13 +460,8 @@ impl<M: Memory> Core<M> {
                 };
                 match self.memory.reconcile_listing(&session, &observed) {
                     Answer::Succeeded => {
-                        // The listing settles every attempt, as Memory records.
                         for known in &projected {
-                            let after = Known {
-                                attempt: Attempt::Settled,
-                                ..known.clone()
-                            };
-                            self.publish(before.get(&known.pane), after);
+                            self.publish(before.get(&known.pane), known.clone());
                         }
                         Outcome::Listed(projected)
                     }
@@ -995,6 +990,26 @@ mod tests {
         assert!(late.feed.is_none(), "one Publisher and one feed per session");
         let mut late = late.stream;
         assert_eq!(late.next().await, Some(signal::Frame::Opened(Panes(Vec::new()))));
+    }
+
+    #[tokio::test]
+    async fn the_list_answer_and_the_published_change_are_the_one_reconciled_known() {
+        use futures_util::StreamExt;
+        let mut memory = seeded();
+        assert_eq!(memory.store_attempt(&pane(), Attempt::Uncertain), Answer::Succeeded);
+        let mut core = Core::new(memory);
+        let Subscription { mut stream, .. } = core
+            .subscribe(&pane().session, Capacity(8))
+            .expect("Memory gives the panes");
+        let outcome = core.list(pane().session, observed(State::Open));
+        assert_eq!(outcome, Outcome::Listed(vec![known_of(State::Open)]));
+        assert_eq!(stream.next().await, Some(signal::Frame::Opened(Panes(vec![Known {
+            attempt: Attempt::Uncertain,
+            ..known_of(State::Open)
+        }]))));
+        assert_eq!(stream.next().await, Some(frame_of(State::Open)));
+        let stored = core.memory().owned(&pane()).expect("memory answers").expect("owned");
+        assert_eq!(Known::from(&stored), known_of(State::Open));
     }
 
     #[tokio::test]
