@@ -1,5 +1,37 @@
 # Upgrades
 
+## 0.10.0 — the shared layer's 0.3.0: the meta socket on the runtime, the launcher ends its pair when told to
+
+The translator and the wire move to 0.10.0, the daemon to 0.9.0 and
+emission to 0.6.0, each taking the nexus crates' 0.3.0 types; core and
+core-meta stay.
+
+**Pins.** The nexus crates 0.3.0 at a4bc011 and `translator-client` and
+`translator-serving` 0.3.0 at 2739d58; build-base registers them
+(39322d5). translator 0.5.2 at 29601a3, nexus 0.9.0, signal 11.2.0 and
+both contracts stay.
+
+**The meta socket on the runtime.** The daemon serves each meta connection
+on its runtime, as it serves a public one: its accepting thread takes the
+paired translator's connection (`Bootstrap::accept_meta`, in place of
+`serve_next_meta`) and spawns `MetaConnection::serve`, so meta connections
+are served side by side within the bootstrap admission's deadline. The meta
+contract has no subscription: `MetaAnswering for Bootstrap` answers each
+Call once (`Reply::Once`), its stream's state and change uninhabited
+(`std::convert::Infallible`). Every answer, its text and its frames are as
+they were.
+
+**The launcher ends its pair when told to.** `capsule-pair` ends the daemon
+and the translator when it receives SIGTERM or SIGINT, and still when either
+ends.
+
+**Memory.** The Capsule keeps its Memory in process and writes no Memory
+file; a Nexus that does takes its path from `nexus_exchange::MemoryPlacing`.
+
+**To adopt.** Nothing changes for a caller: the sockets, the CLIs and every
+Datom text are the same. A stop of the pair may now signal its launcher
+alone.
+
 ## 0.9.0 — the shared layer's 0.2.0: every exchange ends, a CLI takes its datom alone, one Nexus bootstrap, a typed lane failure
 
 The translator and the wire move to 0.9.0, the daemon to 0.8.0 and emission

@@ -133,9 +133,10 @@ calls and subscriptions share one connection; a subscription's task is woken by
 its stream's next frame or by its closing, never by a timer; the authority is the
 connection's, taken from its peer credentials at accept, and each Call's Caller
 is checked against it. The greeting must arrive within the transport timeout;
-after it a connection may be quiet. The meta socket serves one connection at a
-time, the whole of it within the bootstrap deadline, and answers its exchanges
-in turn.
+after it a connection may be quiet. The meta socket is served the same way,
+its connections side by side on the runtime, each frame within the
+bootstrap admission's deadline; its contract has no subscription, so each
+Configure is answered once and ended.
 
 This serving is every Nexus's, written once in the nexus repository:
 `nexus-serving` holds the listeners, the paired-peer admission, the meta and
@@ -154,7 +155,9 @@ SO_PEERCRED and the foreign-login refusal, readiness, text read within a
 budget, the Call carried to the Nexus and every answer written back until
 the Nexus ends the exchange, the meta split, the emission lane, the
 translator's bootstrap frame and the pair launcher, which writes the core
-its `NexusBootstrap` with a fresh instance identifier. Every exchange ends,
+its `NexusBootstrap` with a fresh instance identifier and ends both
+processes when it is told to end, by SIGTERM or SIGINT, or when either
+ends. Every exchange ends,
 a one-answer exchange after its answer, so a refused Subscribe ends with its
 refusal and its CLI exits after printing it. A CLI takes its datom alone,
 `capsule '<datom>'` and `capsule-meta '<datom>'`: its place is the one

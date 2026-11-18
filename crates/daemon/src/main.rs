@@ -1,4 +1,4 @@
-use nexus_serving::{BootstrapReading, ConnectionServing, NexusBootstrap};
+use nexus_serving::{BootstrapReading, ConnectionServing, MetaServing, NexusBootstrap};
 use std::sync::Arc;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,9 +19,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         admission,
         place.peer_identity,
     )?);
-    // The public socket, its subscriptions and the actor that owns the
-    // Capsule's state run on this runtime; the meta socket and the accepting
-    // stay on threads of their own.
+    // Both sockets' connections, the public socket's subscriptions and the
+    // actor that owns the Capsule's state run on this runtime; the accepting
+    // stays on threads of its own.
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     let dispatcher = capsule_nexus_daemon::Dispatcher::new(
         bootstrap.paths(),
@@ -31,10 +31,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let meta = Arc::clone(&bootstrap);
+    let meta_runtime = runtime.handle().clone();
     std::thread::spawn(move || loop {
-        if let Err(error) = meta.serve_next_meta() {
-            eprintln!("Capsule Nexus meta listener failed permanently: {error}");
-            std::process::exit(1);
+        match meta.accept_meta() {
+            Ok(stream) => {
+                meta_runtime.spawn(capsule_nexus_daemon::MetaConnection::serve(
+                    stream,
+                    Arc::clone(&meta),
+                    meta.admission(),
+                ));
+            }
+            Err(error) => {
+                eprintln!("Capsule Nexus meta listener failed permanently: {error}");
+                std::process::exit(1);
+            }
         }
     });
 

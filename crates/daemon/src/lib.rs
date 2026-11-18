@@ -67,8 +67,10 @@ impl Bootstrap {
         Arc::clone(&self.store)
     }
 
-    pub fn serve_next_meta(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.listeners.serve_next_meta(self)
+    /// The next meta connection from the paired translator, to be served on
+    /// the runtime by [`MetaConnection`].
+    pub fn accept_meta(&self) -> std::io::Result<std::os::unix::net::UnixStream> {
+        self.listeners.accept_meta()
     }
 
     pub fn accept_public(&self) -> std::io::Result<AcceptedPublic> {
@@ -84,20 +86,39 @@ impl Bootstrap {
     }
 }
 
-/// The meta socket answers each Call with what configuring its setting
-/// answers.
+/// One meta connection, served with the Bootstrap's bodies.
+pub type MetaConnection = nexus_serving::MetaConnection<Bootstrap>;
+
+/// The meta socket answers each Call once, with what configuring its setting
+/// answers. The meta contract has no subscription, so its stream carries no
+/// frame: its state and change are uninhabited.
 impl MetaAnswering for Bootstrap {
+    type Component = CapsuleNexus;
     type Query = capsule_nexus_wire::meta_call::Input;
     type Response = capsule_nexus_wire::meta_call::Output;
+    type State = std::convert::Infallible;
+    type Change = std::convert::Infallible;
 
-    fn answer(&self, input: Self::Query) -> Self::Response {
+    fn answer(
+        &self,
+        input: Self::Query,
+    ) -> Reply<Self::Response, std::convert::Infallible, std::convert::Infallible> {
         let capsule_nexus_wire::meta_call::Input::Call(call) = input;
         let response = match call.meta_input.0 {
             core_meta_capsule_nexus::Input::Configure(setting) => self.configure(setting),
         };
-        capsule_nexus_wire::meta_call::Output::Answered(capsule_nexus_wire::meta_payload::Output(
-            response,
+        Reply::Once(capsule_nexus_wire::meta_call::Output::Answered(
+            capsule_nexus_wire::meta_payload::Output(response),
         ))
+    }
+
+    fn subscribed(
+        frame: signal::Frame<std::convert::Infallible, std::convert::Infallible>,
+    ) -> Self::Response {
+        match frame {
+            signal::Frame::Opened(never) | signal::Frame::Lagged(never) => match never {},
+            signal::Frame::Changed(never) => match never {},
+        }
     }
 }
 

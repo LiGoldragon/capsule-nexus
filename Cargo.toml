@@ -11,13 +11,13 @@ signal-capsule-nexus = { git = "https://github.com/LiGoldragon/signal-capsule-ne
 meta-signal-capsule-nexus = { git = "https://github.com/LiGoldragon/meta-signal-capsule-nexus", rev = "76b4235650b6b1940478c30fc992d17c6e0e0459", default-features = false }
 signal = { git = "https://github.com/LiGoldragon/signal", rev = "4f5cbb9", default-features = false }
 nexus = { git = "https://github.com/LiGoldragon/nexus", rev = "d020a62", default-features = false }
-nexus-exchange = { git = "https://github.com/LiGoldragon/nexus", rev = "fb3441f952ecba19dd3e9f288a39e7275f8ae700", default-features = false }
-nexus-querying = { git = "https://github.com/LiGoldragon/nexus", rev = "fb3441f952ecba19dd3e9f288a39e7275f8ae700", default-features = false }
-nexus-serving = { git = "https://github.com/LiGoldragon/nexus", rev = "fb3441f952ecba19dd3e9f288a39e7275f8ae700", default-features = false }
+nexus-exchange = { git = "https://github.com/LiGoldragon/nexus", rev = "a4bc0113c10c34ec9d92cde2d650eca9324144db", default-features = false }
+nexus-querying = { git = "https://github.com/LiGoldragon/nexus", rev = "a4bc0113c10c34ec9d92cde2d650eca9324144db", default-features = false }
+nexus-serving = { git = "https://github.com/LiGoldragon/nexus", rev = "a4bc0113c10c34ec9d92cde2d650eca9324144db", default-features = false }
 kameo = "0.22"
 tokio = { version = "1.53", default-features = false }
 futures-util = { version = "0.3", default-features = false }
 shared-translator = { package = "translator", git = "https://github.com/LiGoldragon/translator", rev = "29601a3", default-features = false, features = ["unix"] }
 translator = { git = "https://github.com/LiGoldragon/translator", rev = "29601a3", default-features = false }
-translator-client = { git = "https://github.com/LiGoldragon/translator", rev = "0b44de796a984e02d2ee96bdd4729bf8acd2a79b", default-features = false }
-translator-serving = { git = "https://github.com/LiGoldragon/translator", rev = "0b44de796a984e02d2ee96bdd4729bf8acd2a79b", default-features = false }
+translator-client = { git = "https://github.com/LiGoldragon/translator", rev = "2739d586e1455a001661fc85a8a61b6219aa99df", default-features = false }
+translator-serving = { git = "https://github.com/LiGoldragon/translator", rev = "2739d586e1455a001661fc85a8a61b6219aa99df", default-features = false }

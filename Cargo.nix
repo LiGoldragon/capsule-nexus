@@ -329,7 +329,7 @@ rec {
       };
       "capsule-nexus-daemon" = rec {
         crateName = "capsule-nexus-daemon";
-        version = "0.8.0";
+        version = "0.9.0";
         edition = "2021";
         crateBin = [
           {
@@ -431,7 +431,7 @@ rec {
       };
       "capsule-nexus-translator" = rec {
         crateName = "capsule-nexus-translator";
-        version = "0.9.0";
+        version = "0.10.0";
         edition = "2021";
         crateBin = [
           {
@@ -551,7 +551,7 @@ rec {
       };
       "capsule-nexus-wire" = rec {
         crateName = "capsule-nexus-wire";
-        version = "0.9.0";
+        version = "0.10.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/wire; };
         libName = "capsule_nexus_wire";
@@ -770,7 +770,7 @@ rec {
       };
       "emission-capsule-nexus" = rec {
         crateName = "emission-capsule-nexus";
-        version = "0.5.0";
+        version = "0.6.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/emission; };
         libName = "emission_capsule_nexus";
@@ -1705,13 +1705,13 @@ rec {
       };
       "nexus-exchange" = rec {
         crateName = "nexus-exchange";
-        version = "0.2.0";
+        version = "0.3.0";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/nexus";
-          rev = "fb3441f952ecba19dd3e9f288a39e7275f8ae700";
-          sha256 = "13dkff8q4wvsqq9i4hg0m1w1c4qw3xlr9wyv3x8dlzvpx18xdvzs";
+          rev = "a4bc0113c10c34ec9d92cde2d650eca9324144db";
+          sha256 = "0cp7b8w7jabk6hklliklaszmbjvkf84mkn4v946n9955bpqbac35";
         };
         libName = "nexus_exchange";
         dependencies = [
@@ -1751,13 +1751,13 @@ rec {
       };
       "nexus-querying" = rec {
         crateName = "nexus-querying";
-        version = "0.2.0";
+        version = "0.3.0";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/nexus";
-          rev = "fb3441f952ecba19dd3e9f288a39e7275f8ae700";
-          sha256 = "13dkff8q4wvsqq9i4hg0m1w1c4qw3xlr9wyv3x8dlzvpx18xdvzs";
+          rev = "a4bc0113c10c34ec9d92cde2d650eca9324144db";
+          sha256 = "0cp7b8w7jabk6hklliklaszmbjvkf84mkn4v946n9955bpqbac35";
         };
         libName = "nexus_querying";
         dependencies = [
@@ -1781,13 +1781,13 @@ rec {
       };
       "nexus-serving" = rec {
         crateName = "nexus-serving";
-        version = "0.2.0";
+        version = "0.3.0";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/nexus";
-          rev = "fb3441f952ecba19dd3e9f288a39e7275f8ae700";
-          sha256 = "13dkff8q4wvsqq9i4hg0m1w1c4qw3xlr9wyv3x8dlzvpx18xdvzs";
+          rev = "a4bc0113c10c34ec9d92cde2d650eca9324144db";
+          sha256 = "0cp7b8w7jabk6hklliklaszmbjvkf84mkn4v946n9955bpqbac35";
         };
         libName = "nexus_serving";
         dependencies = [
@@ -3139,13 +3139,13 @@ rec {
       };
       "translator-client" = rec {
         crateName = "translator-client";
-        version = "0.2.0";
+        version = "0.3.0";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/translator";
-          rev = "0b44de796a984e02d2ee96bdd4729bf8acd2a79b";
-          sha256 = "1f0blyal7fswcriz11iihdv7xl56rcx7ravcla1rf0m41hhafyr2";
+          rev = "2739d586e1455a001661fc85a8a61b6219aa99df";
+          sha256 = "10dhydxxhx154bnvib7rnirj826mrca8s6rqaz83z44ca3k3hvms";
         };
         libName = "translator_client";
         dependencies = [
@@ -3190,13 +3190,13 @@ rec {
       };
       "translator-serving" = rec {
         crateName = "translator-serving";
-        version = "0.2.0";
+        version = "0.3.0";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/translator";
-          rev = "0b44de796a984e02d2ee96bdd4729bf8acd2a79b";
-          sha256 = "1f0blyal7fswcriz11iihdv7xl56rcx7ravcla1rf0m41hhafyr2";
+          rev = "2739d586e1455a001661fc85a8a61b6219aa99df";
+          sha256 = "10dhydxxhx154bnvib7rnirj826mrca8s6rqaz83z44ca3k3hvms";
         };
         libName = "translator_serving";
         dependencies = [
@@ -3239,7 +3239,7 @@ rec {
           {
             name = "rustix";
             packageId = "rustix";
-            features = [ "rand" ];
+            features = [ "process" "rand" ];
           }
           {
             name = "signal";
@@ -3247,11 +3247,25 @@ rec {
             usesDefaultFeatures = false;
           }
           {
+            name = "tokio";
+            packageId = "tokio";
+            usesDefaultFeatures = false;
+            features = [ "macros" "net" "rt" "signal" ];
+          }
+          {
             name = "translator";
             packageId = "translator";
             rename = "shared-translator";
             usesDefaultFeatures = false;
             features = [ "unix" ];
+          }
+        ];
+        devDependencies = [
+          {
+            name = "tokio";
+            packageId = "tokio";
+            usesDefaultFeatures = false;
+            features = [ "macros" "net" "rt" "rt-multi-thread" "signal" ];
           }
         ];
         features = {
