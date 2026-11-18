@@ -1705,13 +1705,13 @@ rec {
       };
       "nexus-exchange" = rec {
         crateName = "nexus-exchange";
-        version = "0.1.0";
+        version = "0.1.1";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/nexus";
-          rev = "8976179c940b4a822990f519515084cb62d3f908";
-          sha256 = "0n0rflgmy9fx5l99q2bwgqrd2ivw3by0digfsl1sya0ddcs0789l";
+          rev = "63a2d477ca194913c847d15f227637d84fbe9aeb";
+          sha256 = "09xh9bps4i0yzcwj3ly4skzwk40pi50xga66032fd2cz9lq66b9p";
         };
         libName = "nexus_exchange";
         dependencies = [
@@ -1751,13 +1751,13 @@ rec {
       };
       "nexus-querying" = rec {
         crateName = "nexus-querying";
-        version = "0.1.0";
+        version = "0.1.1";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/nexus";
-          rev = "8976179c940b4a822990f519515084cb62d3f908";
-          sha256 = "0n0rflgmy9fx5l99q2bwgqrd2ivw3by0digfsl1sya0ddcs0789l";
+          rev = "63a2d477ca194913c847d15f227637d84fbe9aeb";
+          sha256 = "09xh9bps4i0yzcwj3ly4skzwk40pi50xga66032fd2cz9lq66b9p";
         };
         libName = "nexus_querying";
         dependencies = [
@@ -1781,13 +1781,13 @@ rec {
       };
       "nexus-serving" = rec {
         crateName = "nexus-serving";
-        version = "0.1.0";
+        version = "0.1.1";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/nexus";
-          rev = "8976179c940b4a822990f519515084cb62d3f908";
-          sha256 = "0n0rflgmy9fx5l99q2bwgqrd2ivw3by0digfsl1sya0ddcs0789l";
+          rev = "63a2d477ca194913c847d15f227637d84fbe9aeb";
+          sha256 = "09xh9bps4i0yzcwj3ly4skzwk40pi50xga66032fd2cz9lq66b9p";
         };
         libName = "nexus_serving";
         dependencies = [
@@ -3139,13 +3139,13 @@ rec {
       };
       "translator-client" = rec {
         crateName = "translator-client";
-        version = "0.1.0";
+        version = "0.1.1";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/translator";
-          rev = "fc037957ca0887165fee69abbc0eea5169b5980a";
-          sha256 = "15c20999aqsxywrfn2vcz5szjyi468wqimlhk8sn3s9k2yzynsrh";
+          rev = "8e744a4503f13dd748e7e222f5f7aa5443b28961";
+          sha256 = "0nkkipr4nqs1w5sj8g8a3y1a7dqg562x7di1k7hh1h98spvq8c2g";
         };
         libName = "translator_client";
         dependencies = [
@@ -3179,13 +3179,13 @@ rec {
       };
       "translator-serving" = rec {
         crateName = "translator-serving";
-        version = "0.1.0";
+        version = "0.1.1";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/translator";
-          rev = "fc037957ca0887165fee69abbc0eea5169b5980a";
-          sha256 = "15c20999aqsxywrfn2vcz5szjyi468wqimlhk8sn3s9k2yzynsrh";
+          rev = "8e744a4503f13dd748e7e222f5f7aa5443b28961";
+          sha256 = "0nkkipr4nqs1w5sj8g8a3y1a7dqg562x7di1k7hh1h98spvq8c2g";
         };
         libName = "translator_serving";
         dependencies = [
