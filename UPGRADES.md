@@ -1,5 +1,13 @@
 # Upgrades
 
+## The contracts renumbered: signal-capsule-nexus 0.5.0, meta-signal-capsule-nexus 0.5.0
+
+A breaking change on a 0.x crate takes the next minor, so the contracts this Nexus speaks are
+renumbered to the 0.x line: signal-capsule-nexus 3.0.0 becomes 0.5.0 (d835557) and
+meta-signal-capsule-nexus 1.0.1 becomes 0.5.0 (a6b99d5), each the same contract. The pins move
+with them, the workspace's and the translator's, on build-base 922ad6d, which registers both. No
+member's version, type, archive or Datom text changes. 1.x, 2.x and 3.x were never deployed.
+
 ## 0.10.0 — the shared layer's 0.3.0: the meta socket on the runtime, the launcher ends its pair when told to
 
 The translator and the wire move to 0.10.0, the daemon to 0.9.0 and
