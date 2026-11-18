@@ -15,6 +15,9 @@ trap cleanup EXIT
 
 export XDG_RUNTIME_DIR=$base/run
 export HOME=$base/home
+export XDG_CONFIG_HOME=$base/config
+mkdir -p "$XDG_CONFIG_HOME/nexus"
+printf '{ one }\n' >"$XDG_CONFIG_HOME/nexus/capsule.datom"
 directory=$XDG_RUNTIME_DIR/nexus/one
 state=$HOME/.local/state/nexus/one
 mkdir -p "$directory" "$state"
@@ -36,7 +39,7 @@ s = socket.socket(socket.AF_UNIX)
 s.connect(sys.argv[1])
 s.close()
 PY
-"$package/bin/capsule-meta" one 'Configure.Polling.25' \
+"$package/bin/capsule-meta" 'Configure.Polling.25' \
   | grep -q Configured
 
 # The text front likewise bounds malformed and partially-progressed frames to
@@ -48,7 +51,7 @@ s.connect(sys.argv[1])
 s.sendall(b'\x00\x00\x00\x01x')
 s.close()
 PY
-"$package/bin/capsule-meta" one 'Configure.StartTimeout.1000' \
+"$package/bin/capsule-meta" 'Configure.StartTimeout.1000' \
   | grep -q Configured
 python3 - "$directory/capsule-meta-translator.sock" <<'PY'
 import socket, sys, time
@@ -58,19 +61,19 @@ s.sendall(b'\x00\x00\x00\x20x')
 time.sleep(70.25)
 s.close()
 PY
-"$package/bin/capsule-meta" one 'Configure.FrameCapacity.8388608' \
+"$package/bin/capsule-meta" 'Configure.FrameCapacity.8388608' \
   | grep -q Configured
 
-"$package/bin/capsule-meta" one \
+"$package/bin/capsule-meta" \
   "Configure.HerdrPath.$package/bin/capsule" | grep -q Configured
-"$package/bin/capsule-meta" one 'Configure.CallTimeout.1000' | grep -q Configured
-"$package/bin/capsule-meta" one 'Configure.OutputLimit.1048576' | grep -q Configured
-"$package/bin/capsule-meta" one 'Configure.TextBudget.{ 1048576 64 }' | grep -q Ready
-"$package/bin/capsule-meta" one 'Configure.SubscriberCapacity.64' | grep -q Configured
-"$package/bin/capsule-meta" one 'Configure.TransportTimeout.1000' | grep -q Ready
+"$package/bin/capsule-meta" 'Configure.CallTimeout.1000' | grep -q Configured
+"$package/bin/capsule-meta" 'Configure.OutputLimit.1048576' | grep -q Configured
+"$package/bin/capsule-meta" 'Configure.TextBudget.{ 1048576 64 }' | grep -q Ready
+"$package/bin/capsule-meta" 'Configure.SubscriberCapacity.64' | grep -q Configured
+"$package/bin/capsule-meta" 'Configure.TransportTimeout.1000' | grep -q Ready
 
 # The ordinary path on this same pair still accepts and answers a typed call.
-"$package/bin/capsule" one 'List.smoke' >"$base/ordinary.out"
+"$package/bin/capsule" 'List.smoke' >"$base/ordinary.out"
 grep -Eq 'Listed|Refused|Unavailable' "$base/ordinary.out"
 kill -0 "$pair_pid"
 

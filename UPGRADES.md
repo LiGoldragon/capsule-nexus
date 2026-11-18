@@ -1,5 +1,62 @@
 # Upgrades
 
+## 0.9.0 — the shared layer's 0.2.0: every exchange ends, a CLI takes its datom alone, one Nexus bootstrap, a typed lane failure
+
+The translator and the wire move to 0.9.0, the daemon to 0.8.0 and emission
+to 0.5.0; core and core-meta stay.
+
+**Pins.** The nexus crates 0.2.0 at fb3441f and `translator-client` and
+`translator-serving` 0.2.0 at 0b44de7; build-base registers them
+(82015ff).
+translator 0.5.2 at 29601a3, nexus 0.9.0, signal 11.2.0 and both contracts
+stay.
+
+**Every exchange ends.** The Nexus ends a one-answer exchange Completed
+after its answer, as it ends a subscription; the translator writes each
+answer back until the end and then `Ended`, or `Failed` with what ended it,
+so a refused Subscribe (`SubscribeRefused`) is answered once and ends, and
+the CLI exits after printing it. `PublicTranslating::answers` is gone: the
+translator no longer tells a Subscribe from any other query.
+
+**A CLI takes its datom alone.** `capsule '<datom>'` and `capsule-meta
+'<datom>'`; the place is the one `$XDG_CONFIG_HOME/nexus/capsule.datom`
+names (`~/.config/nexus/capsule.datom` when the variable is unset), `{
+<place-name> }`, resolved under `$XDG_RUNTIME_DIR/nexus/`. A configuration
+missing, unreadable or invalid is refused naming the file,
+`Missing.<path>`, `Unreadable.{ <path> <reason> }` or `Invalid.{ <path>
+<reason> }`, exit 2, and nothing is sent; a second argument is a usage
+refusal, exit 2.
+
+**One Nexus bootstrap.** `CoreBootstrap` and `crates/wire/ethos/transport.ethos`
+are gone, with the wire's `transport_types`: the daemon reads
+`nexus_serving::NexusBootstrap`, the same four fields in the same archive,
+and the pair launcher in `translator-serving` writes it with a fresh
+instance identifier, so `PairLaunching` and the translator crate's
+`instance` module are gone. `capsule-place … Core` writes a
+`NexusBootstrap`.
+
+**The text budget starts at the bootstrap's.** `CapsuleTranslator` is made
+from its `TranslatorBootstrap` (`TryFrom`), its text budget the bootstrap's
+text limits, which the launcher takes from the flake's pairing values; the
+meta socket's `Configure.TextBudget` sets it after, and the translator's
+readiness no longer awaits it. `CapsuleTranslator::default()` is gone; a
+test makes one `From` a `ValidTextBudget`.
+
+**The translator's settings in a forwarded readout.** A Nexus setting's
+`Configured` readiness carries the translator's own settings still awaited,
+first, then the Nexus's: `Ready` only when both are. The meta contract has
+no subscription, so the translator announces nothing (`announced` is
+`None`).
+
+**A failed lane is typed.** `emission.ethos`'s output gains
+`LaneFailed.nexus_exchange:LaneFailure`, and `emission_capsule_nexus::Output`
+bears `LaneFailing`. The daemon reads an unsubmitted or declined lane as the
+translator unavailable and an unanswered one as uncertain; a lane fault never
+reads as an outcome the world answered.
+
+**To adopt.** Write each CLI's place into `nexus/capsule.datom` under the
+configuration home, and drop the place argument from every call.
+
 ## 0.8.0 — the translator is every translator's
 
 The translator and the wire move to 0.8.0; core, core-meta, daemon and

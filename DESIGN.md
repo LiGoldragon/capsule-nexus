@@ -151,14 +151,25 @@ translator repository: `translator-client` holds the CLIs' text lanes,
 the socket of each named after the Nexus in the place's runtime directory,
 and `translator-serving` both translator sockets, the Caller from
 SO_PEERCRED and the foreign-login refusal, readiness, text read within a
-budget, the Call carried to the Nexus once or followed, the meta split,
-the emission lane, the translator's bootstrap frame and the pair launcher.
-The Capsule writes only its bodies, on `CapsuleTranslator`: its public
-contract and a Subscribe followed (`PublicTranslating`), its own four
-settings answered and the rest forwarded as a `CoreSet`
-(`MetaTranslating`), a herdr call made for an emission
-(`EmissionAnswering`), and the core's bootstrap with a fresh instance
-identifier (`PairLaunching`).
+budget, the Call carried to the Nexus and every answer written back until
+the Nexus ends the exchange, the meta split, the emission lane, the
+translator's bootstrap frame and the pair launcher, which writes the core
+its `NexusBootstrap` with a fresh instance identifier. Every exchange ends,
+a one-answer exchange after its answer, so a refused Subscribe ends with its
+refusal and its CLI exits after printing it. A CLI takes its datom alone,
+`capsule '<datom>'` and `capsule-meta '<datom>'`: its place is the one
+`$XDG_CONFIG_HOME/nexus/capsule.datom` (`~/.config/nexus/capsule.datom`)
+names, `{ <place-name> }`, and a configuration missing, unreadable or
+invalid is refused naming the file, exit 2, with nothing sent. The Capsule
+writes only its bodies, on `CapsuleTranslator`: its public contract
+(`PublicTranslating`), its own four settings answered, the text budget
+starting at the bootstrap's text limits, and the rest forwarded as a
+`CoreSet`, the Nexus's readiness answered with the translator's own
+settings still awaited merged in first (`MetaTranslating`), and a herdr
+call made for an emission (`EmissionAnswering`). An emission whose lane
+failed is its output's `LaneFailed`, apart from every outcome the world
+answered: the translator not reached or declining is unavailable, an
+answer not read is uncertain, and neither reads as a pane already gone.
 
 ## External calls
 

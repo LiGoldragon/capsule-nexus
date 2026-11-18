@@ -6,10 +6,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use capsule_nexus_wire::transport_types::CoreBootstrap;
 use nexus_exchange::{
     Admission, FrameCapacityBytes, FrameDeadlineMilliseconds, RetryDelayMilliseconds,
 };
+use nexus_serving::{InstanceId, NexusBootstrap};
 use shared_translator::{
     FrameCapacity, FrameWriting, Place, PlaceName, Runtime, Signalizable, State,
 };
@@ -54,7 +54,7 @@ fn admission(deadline: i64) -> Admission {
 }
 
 /// Feed one bootstrap to the daemon and return whether it exited successfully.
-fn refuse(bootstrap: CoreBootstrap) -> bool {
+fn refuse(bootstrap: NexusBootstrap) -> bool {
     let mut child = Command::new(env!("CARGO_BIN_EXE_capsule-nexus-daemon"))
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -80,15 +80,15 @@ fn legacy_state(root: &Path) -> PathBuf {
     legacy
 }
 
-fn bootstrap(place: Place, admission: Admission) -> CoreBootstrap {
-    CoreBootstrap {
+fn bootstrap(place: Place, admission: Admission) -> NexusBootstrap {
+    NexusBootstrap {
         place,
         admission,
         peer_identity: PeerIdentity {
             user_id: UserId(0),
             process_id: ProcessId(1),
         },
-        instance_id: signal_capsule_nexus::InstanceId("instance".into()),
+        instance_id: InstanceId("instance".into()),
     }
 }
 

@@ -19,6 +19,9 @@ start_pair() {
   local generation=$1
   export XDG_RUNTIME_DIR=$base/$generation/run
   export HOME=$base/$generation/home
+  export XDG_CONFIG_HOME=$base/$generation/config
+  mkdir -p "$XDG_CONFIG_HOME/nexus"
+  printf '{ one }\n' >"$XDG_CONFIG_HOME/nexus/capsule.datom"
   directory=$XDG_RUNTIME_DIR/nexus/one
   state=$HOME/.local/state/nexus/one
   mkdir -p "$directory" "$state"
@@ -34,7 +37,7 @@ start_pair() {
   done
   [[ ${#child_pids[@]} -eq 2 ]]
   [[ -S $directory/capsule-meta-translator.sock ]]
-  "$package/bin/capsule-meta" one 'Configure.Polling.100' \
+  "$package/bin/capsule-meta" 'Configure.Polling.100' \
     | grep -q Configured
 }
 

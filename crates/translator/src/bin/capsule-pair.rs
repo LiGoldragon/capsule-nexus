@@ -1,6 +1,5 @@
-use capsule_nexus_translator::CapsuleTranslator;
 use translator_serving::{PairReading, PairRunning, Pairing};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    match Pairing::from_arguments(std::env::args().skip(1))?.launch::<CapsuleTranslator>()? {}
+    match Pairing::from_arguments(std::env::args().skip(1))?.launch()? {}
 }

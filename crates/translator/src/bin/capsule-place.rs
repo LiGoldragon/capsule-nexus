@@ -1,11 +1,11 @@
-use capsule_nexus_translator::transport_types::CoreBootstrap;
 use nexus_exchange::{
     Admission, FrameCapacityBytes, FrameDeadlineMilliseconds, RetryDelayMilliseconds,
 };
 use shared_translator::{FrameCapacity, FrameWriting, PeerIdentity, ProcessId, Signalizable, UserId};
 use std::{env, io};
 use translator_serving::{
-    Budgeting, DepthLimit, NodeLimit, TextLimits, TranslatorBootstrap, ValidTextBudget,
+    Budgeting, DepthLimit, InstanceId, NexusBootstrap, NodeLimit, TextLimits,
+    TranslatorBootstrap, ValidTextBudget,
 };
 
 fn integer(value: Option<String>, name: &str) -> Result<i64, Box<dyn std::error::Error>> {
@@ -36,11 +36,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut output = io::stdout();
     match target.as_str() {
         "Core" => {
-            let instance_id = signal_capsule_nexus::InstanceId(
-                arguments.next().ok_or("INSTANCE_ID")?,
-            );
+            let instance_id = InstanceId(arguments.next().ok_or("INSTANCE_ID")?);
             output.write_frame(
-                &CoreBootstrap { place, admission, peer_identity, instance_id }.signalize()?,
+                &NexusBootstrap { place, admission, peer_identity, instance_id }.signalize()?,
                 FrameCapacity::from(signal::MAXIMUM_SIGNAL_BYTES),
             )?
         },

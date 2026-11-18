@@ -2,9 +2,7 @@
 //! every translator shares, and the herdr calls it makes for the Nexus.
 
 use crate::generated::argument::{Arguable, ListArgument, PaneCloseArgument};
-use crate::instance::FreshInstance;
 use crate::runner::{self, Captured};
-use capsule_nexus_wire::transport_types::CoreBootstrap;
 use capsule_nexus_wire::{meta_call, meta_payload, public_call, public_payload, CapsuleNexus};
 use core_meta_capsule_nexus::CoreSet;
 use emission_capsule_nexus::{
@@ -14,25 +12,41 @@ use emission_capsule_nexus::{
 };
 use meta_signal_capsule_nexus::Set;
 use serde::Deserialize;
-use shared_translator::{Caller, PeerIdentity};
+use shared_translator::Caller;
 use signal_capsule_nexus::{
-    AgentKind, ErrorCode, Executable, ExitStatus, InstanceId, Message, Pane, PaneId, Refusal,
-    Session, State,
+    AgentKind, ErrorCode, Executable, ExitStatus, Message, Pane, PaneId, Refusal, Session, State,
 };
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use translator_serving::{
-    Answers, DepthLimit, EmissionAnswering, MetaTranslating, NexusFailure, NodeLimit,
-    PairLaunching, Pairing, PublicTranslating, Settling, TextBudgeting, TextLimits, Translator,
-    ValidTextBudget,
+    DepthLimit, EmissionAnswering, MetaTranslating, NexusFailure, NodeLimit, PublicTranslating,
+    Settling, TextBudgeting, TextLimits, Translator, TranslatorBootstrap, ValidTextBudget,
 };
 
 /// The Capsule Nexus's translator, holding its own settings.
-#[derive(Default)]
 pub struct CapsuleTranslator {
     pub configuration: TranslatorConfiguration,
+}
+
+/// The translator a bootstrap starts: its text budget starts at the
+/// bootstrap's text limits, which the pair launcher takes from its
+/// configuration; its other settings await the meta socket.
+impl TryFrom<&TranslatorBootstrap> for CapsuleTranslator {
+    type Error = &'static str;
+
+    fn try_from(bootstrap: &TranslatorBootstrap) -> Result<Self, Self::Error> {
+        ValidTextBudget::try_from(&bootstrap.text_limits).map(Self::from)
+    }
+}
+
+impl From<ValidTextBudget> for CapsuleTranslator {
+    fn from(text_budget: ValidTextBudget) -> Self {
+        Self {
+            configuration: TranslatorConfiguration::from(text_budget),
+        }
+    }
 }
 
 impl Translator for CapsuleTranslator {
@@ -49,15 +63,6 @@ impl PublicTranslating for CapsuleTranslator {
     type PublicOutput = signal_capsule_nexus::Output;
     type PublicCall = public_call::Input;
     type PublicResponse = public_call::Output;
-
-    /// A Subscribe is followed, its one dedicated stream on the Nexus;
-    /// every other query is answered once.
-    fn answers(input: &signal_capsule_nexus::Input) -> Answers {
-        match input {
-            signal_capsule_nexus::Input::Subscribe(_) => Answers::Followed,
-            _ => Answers::Once,
-        }
-    }
 
     fn public_call(caller: Caller, input: signal_capsule_nexus::Input) -> public_call::Input {
         public_call::Input::Call(public_call::Call_Data {
@@ -115,8 +120,11 @@ impl MetaTranslating for CapsuleTranslator {
     }
 
     /// The Nexus's configured setting, named as the meta contract names it
-    /// and owned by the Nexus; its refusal as it stands.
+    /// and owned by the Nexus, its readiness the Capsule's whole: the
+    /// translator's own settings still awaited, then the Nexus's; its
+    /// refusal as it stands.
     fn meta_answered(
+        &self,
         response: meta_call::Output,
     ) -> Result<meta_signal_capsule_nexus::Output, NexusFailure> {
         match response {
@@ -126,7 +134,7 @@ impl MetaTranslating for CapsuleTranslator {
                         meta_signal_capsule_nexus::Configured_Data {
                             set: public_setting(configured.core_set),
                             owner: meta_signal_capsule_nexus::Owner::Nexus,
-                            readiness: configured.readiness,
+                            readiness: self.configuration.merged(configured.readiness),
                         },
                     )
                 }
@@ -136,6 +144,14 @@ impl MetaTranslating for CapsuleTranslator {
             }),
             meta_call::Output::Failed(message) => Err(NexusFailure(message)),
         }
+    }
+
+    /// The meta contract has no subscription to carry a change into.
+    fn announced(
+        &self,
+        _answered: &meta_signal_capsule_nexus::Output,
+    ) -> Option<meta_signal_capsule_nexus::Output> {
+        None
     }
 }
 
@@ -153,24 +169,6 @@ impl EmissionAnswering for CapsuleTranslator {
     }
 }
 
-impl PairLaunching for CapsuleTranslator {
-    type NexusBootstrap = CoreBootstrap;
-
-    /// The core's bootstrap carries a fresh instance identifier, which every
-    /// workspace it creates is labelled with.
-    fn nexus_bootstrap(
-        pairing: &Pairing,
-        translator: PeerIdentity,
-    ) -> Result<CoreBootstrap, Box<dyn std::error::Error>> {
-        Ok(CoreBootstrap {
-            place: pairing.place.clone(),
-            admission: pairing.admission.clone(),
-            peer_identity: translator,
-            instance_id: InstanceId::fresh()?,
-        })
-    }
-}
-
 fn public_setting(setting: CoreSet) -> Set {
     match setting {
         CoreSet::StartTimeout(value) => Set::StartTimeout(value),
@@ -183,17 +181,32 @@ fn public_setting(setting: CoreSet) -> Set {
     }
 }
 
-#[derive(Default)]
+/// The translator's own settings: the herdr path, the call timeout and the
+/// output limit, set on the meta socket, and the text budget, which starts
+/// at the bootstrap's and is set on the meta socket after.
 pub struct TranslatorConfiguration {
     partial: std::sync::RwLock<PartialTranslatorConfiguration>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct PartialTranslatorConfiguration {
     executable: Option<PathBuf>,
     call_timeout: Option<Duration>,
     output_limit: Option<usize>,
-    text_budget: Option<ValidTextBudget>,
+    text_budget: ValidTextBudget,
+}
+
+impl From<ValidTextBudget> for TranslatorConfiguration {
+    fn from(text_budget: ValidTextBudget) -> Self {
+        Self {
+            partial: std::sync::RwLock::new(PartialTranslatorConfiguration {
+                executable: None,
+                call_timeout: None,
+                output_limit: None,
+                text_budget,
+            }),
+        }
+    }
 }
 
 /// The translator's settings once every one is set.
@@ -225,14 +238,14 @@ impl TranslatorConfiguration {
             executable: partial.executable?,
             call_timeout: partial.call_timeout?,
             output_limit: partial.output_limit?,
-            text_budget: partial.text_budget?,
+            text_budget: partial.text_budget,
         };
         Runtime::new(ready.executable.clone(), ready.call_timeout, ready.output_limit)?;
         Some(ready)
     }
 
     pub fn apply(&self, setting: Set) -> meta_signal_capsule_nexus::Output {
-        use meta_signal_capsule_nexus::{Configured_Data, Output, Owner, Readiness, SettingName};
+        use meta_signal_capsule_nexus::{Configured_Data, Output, Owner, SettingName};
         let applied = setting.clone();
         let mut partial = self
             .partial
@@ -262,7 +275,7 @@ impl TranslatorConfiguration {
                 depth_limit: DepthLimit(value.depth_limit.0),
             }) {
                 Ok(budget) => {
-                    partial.text_budget = Some(budget);
+                    partial.text_budget = budget;
                     None
                 }
                 Err(_) => Some(SettingName::TextBudget),
@@ -283,28 +296,57 @@ impl TranslatorConfiguration {
                 "invalid setting value",
             ));
         }
-        let mut awaiting = Vec::new();
-        if partial.executable.is_none() {
-            awaiting.push(SettingName::HerdrPath);
-        }
-        if partial.call_timeout.is_none() {
-            awaiting.push(SettingName::CallTimeout);
-        }
-        if partial.output_limit.is_none() {
-            awaiting.push(SettingName::OutputLimit);
-        }
-        if partial.text_budget.is_none() {
-            awaiting.push(SettingName::TextBudget);
-        }
+        let awaiting = partial.awaiting();
+        drop(partial);
         Output::Configured(Configured_Data {
             set: applied,
             owner: Owner::Translator,
-            readiness: if awaiting.is_empty() {
-                Readiness::Ready
-            } else {
-                Readiness::Awaiting(awaiting)
-            },
+            readiness: readiness(awaiting),
         })
+    }
+
+    /// The readiness the Nexus answered, with the translator's own settings
+    /// still awaited first among the awaited: the Capsule is ready when both
+    /// are.
+    pub fn merged(
+        &self,
+        nexus: meta_signal_capsule_nexus::Readiness,
+    ) -> meta_signal_capsule_nexus::Readiness {
+        let mut awaiting = self
+            .partial
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .awaiting();
+        if let meta_signal_capsule_nexus::Readiness::Awaiting(names) = nexus {
+            awaiting.extend(names);
+        }
+        readiness(awaiting)
+    }
+}
+
+impl PartialTranslatorConfiguration {
+    /// The translator's own settings not yet set.
+    fn awaiting(&self) -> Vec<meta_signal_capsule_nexus::SettingName> {
+        use meta_signal_capsule_nexus::SettingName;
+        [
+            (self.executable.is_none(), SettingName::HerdrPath),
+            (self.call_timeout.is_none(), SettingName::CallTimeout),
+            (self.output_limit.is_none(), SettingName::OutputLimit),
+        ]
+        .into_iter()
+        .filter_map(|(unset, name)| unset.then_some(name))
+        .collect()
+    }
+}
+
+/// Ready when nothing is awaited.
+fn readiness(
+    awaiting: Vec<meta_signal_capsule_nexus::SettingName>,
+) -> meta_signal_capsule_nexus::Readiness {
+    if awaiting.is_empty() {
+        meta_signal_capsule_nexus::Readiness::Ready
+    } else {
+        meta_signal_capsule_nexus::Readiness::Awaiting(awaiting)
     }
 }
 
@@ -883,7 +925,7 @@ mod tests {
     use std::collections::HashMap;
     use std::os::unix::net::{UnixListener, UnixStream};
     use translator_client::{TextClient, TextLane, TextRequesting};
-    use translator_serving::{Connection, ConnectionServing, Endpoint};
+    use translator_serving::{Connection, ConnectionServing, Endpoint, MetaSubscriptions};
 
     fn place(runtime: &str) -> Place {
         Place {
@@ -915,6 +957,7 @@ mod tests {
             admission: admission(),
             bootstrap_budget: ValidTextBudget::MAXIMUM,
             nexus: None,
+            subscriptions: &MetaSubscriptions::default(),
         }
         .serve(stream)
         .expect("isolated request served");
@@ -955,7 +998,7 @@ mod tests {
         .expect("request frame");
         serve(
             &mut server,
-            &CapsuleTranslator::default(),
+            &CapsuleTranslator::from(ValidTextBudget::MAXIMUM),
             &place("/tmp"),
             Endpoint::Public,
         );
@@ -970,7 +1013,7 @@ mod tests {
     #[test]
     fn malformed_meta_request_is_failed_and_next_valid_set_is_answered() {
         use crate::transport::Kind;
-        let translator = CapsuleTranslator::default();
+        let translator = CapsuleTranslator::from(ValidTextBudget::MAXIMUM);
         let malformed = meta_request(&translator, "this is not datom");
         assert_eq!(malformed.kind, Kind::Failed);
 
@@ -987,7 +1030,7 @@ mod tests {
     #[test]
     fn herdr_path_must_be_absolute_and_failed_set_preserves_prior_value() {
         use meta_signal_capsule_nexus::{PathValue, Output, Set};
-        let configuration = TranslatorConfiguration::default();
+        let configuration = TranslatorConfiguration::from(ValidTextBudget::MAXIMUM);
         assert!(matches!(
             configuration.apply(Set::HerdrPath(PathValue("/usr/bin/herdr".into()))),
             Output::Configured(_)
@@ -1169,9 +1212,17 @@ mod tests {
             stream
                 .write_frame(&response, capacity)
                 .expect("delayed response");
+            stream
+                .write_frame(
+                    &Delivery::<Output>::End(signal::Ending::completed(opening.exchange))
+                        .signalize()
+                        .expect("end signal"),
+                    capacity,
+                )
+                .expect("the exchange's end");
         });
 
-        let translator = CapsuleTranslator::default();
+        let translator = CapsuleTranslator::from(ValidTextBudget::MAXIMUM);
         let configuration = &translator.configuration;
         let _ = configuration.apply(Set::HerdrPath(PathValue("/bin/true".into())));
         let _ = configuration.apply(Set::CallTimeout(Timeout(20)));
@@ -1194,6 +1245,7 @@ mod tests {
                     depth: 32,
                 },
                 nexus: None,
+                subscriptions: &MetaSubscriptions::default(),
             }
             .serve(&mut stream)
             .expect("front request");

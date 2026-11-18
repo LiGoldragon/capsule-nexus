@@ -1,7 +1,0 @@
-Library
-[ shared_translator:[ Place PeerIdentity ]              ; imports
-  signal_capsule_nexus:[ InstanceId ]
-  nexus_exchange:[ Admission ] ]
-[ CoreBootstrap.{ Place Admission PeerIdentity InstanceId } ]   ; types
-[]                                                    ; traits
-[]                                                    ; associations

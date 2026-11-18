@@ -1,8 +1,10 @@
 ; Temporary stand-in: Emission is a Signal root until ethos-zero supports Emission.
 Signal
-[ signal_capsule_nexus:[ Session PaneId Pane Root Variable Command Text Keys State Refusal CreationId ] ]
+[ signal_capsule_nexus:[ Session PaneId Pane Root Variable Command Text Keys State Refusal CreationId ]
+  nexus_exchange:[ LaneFailure ] ]
 [ Emit.Herdr ]                                        ; emissions: one typed herdr call
-[ Emitted.ExternalOutcome ]                           ; external outcome
+[ Emitted.ExternalOutcome                             ; external outcome
+  LaneFailed.LaneFailure ]                            ; the emission's lane failed, apart from every outcome
 [ Herdr.{ Session Verb }                               ; types: exactly one Session per call
   Timeout.Integer
   Verb.[ WorkspaceCreate.{ CreationId Root Vector<Variable> }

@@ -18,17 +18,11 @@ esac
 generated="$temporary/$name.rs"
 
 case "$normalization" in
-  transport)
-    sed -i '/^)]$/a use shared_translator::placement::Place;' "$generated"
-    sed -i 's/shared_translator::Place/Place/g' "$generated"
-    ;;
   public-call)
-    sed -i '/^)]$/a use crate::transport_types as transport;\
-use crate::public_payload;' "$generated"
+    sed -i '/^)]$/a use crate::public_payload;' "$generated"
     ;;
   meta-call)
-    sed -i '/^)]$/a use crate::transport_types as transport;\
-use crate::meta_payload;' "$generated"
+    sed -i '/^)]$/a use crate::meta_payload;' "$generated"
     ;;
   core-meta)
     cat >> "$generated" <<'EOF'

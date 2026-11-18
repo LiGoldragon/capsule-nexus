@@ -1,15 +1,10 @@
-use nexus_serving::ConnectionServing;
-use signal::{FrameCapacity, FrameReading, Restorable, Signal};
+use nexus_serving::{BootstrapReading, ConnectionServing, NexusBootstrap};
 use std::sync::Arc;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let bootstrap_capacity = FrameCapacity::from(signal::MAXIMUM_SIGNAL_BYTES);
     let place = {
         let mut input = std::io::stdin().lock();
-        let body = input.read_frame(bootstrap_capacity)?;
-        let bootstrap =
-            Signal::<capsule_nexus_wire::transport_types::CoreBootstrap>::from(Vec::<u8>::from(body))
-                .restore()?;
+        let bootstrap = NexusBootstrap::read_bootstrap(&mut input)?;
         drop(input);
         nix::unistd::close(0)?;
         bootstrap
@@ -31,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dispatcher = capsule_nexus_daemon::Dispatcher::new(
         bootstrap.paths(),
         bootstrap.configuration_store(),
-        place.instance_id,
+        signal_capsule_nexus::InstanceId(place.instance_id.0),
         runtime.handle().clone(),
     );
 

@@ -47,13 +47,19 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# Each wrapper takes the place first: a CLI takes its datom alone, so the
+# place is the configuration a home of the place's own names.
+for name in one two; do
+  mkdir -p "$base/config-$name/nexus"
+  printf '{ %s }\n' "$name" >"$base/config-$name/nexus/capsule.datom"
+done
 cat > "$base/herdr" <<WRAPPER
 #!/usr/bin/env bash
-exec "$package/bin/capsule" "\$@"
+XDG_CONFIG_HOME="$base/config-\$1" exec "$package/bin/capsule" "\$2"
 WRAPPER
 cat > "$base/herdr-meta" <<WRAPPER
 #!/usr/bin/env bash
-exec "$package/bin/capsule-meta" "\$@"
+XDG_CONFIG_HOME="$base/config-\$1" exec "$package/bin/capsule-meta" "\$2"
 WRAPPER
 chmod +x "$base/herdr" "$base/herdr-meta"
 public="$base/herdr"

@@ -1,8 +1,6 @@
 use capsule_nexus_wire::CapsuleNexus;
-use translator_client::{AnswerPrinting, Invoking, TextInvocation, TextLane};
+use translator_client::{TextCommand, TextInvocation, TextLane};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    TextInvocation::from_arguments::<CapsuleNexus>(TextLane::MetaText, std::env::args().skip(1))?
-        .print_answers()?;
-    Ok(())
+fn main() -> std::process::ExitCode {
+    TextInvocation::run::<CapsuleNexus>(TextLane::MetaText, std::env::args().skip(1))
 }

@@ -329,7 +329,7 @@ rec {
       };
       "capsule-nexus-daemon" = rec {
         crateName = "capsule-nexus-daemon";
-        version = "0.7.0";
+        version = "0.8.0";
         edition = "2021";
         crateBin = [
           {
@@ -431,7 +431,7 @@ rec {
       };
       "capsule-nexus-translator" = rec {
         crateName = "capsule-nexus-translator";
-        version = "0.8.0";
+        version = "0.9.0";
         edition = "2021";
         crateBin = [
           {
@@ -511,11 +511,6 @@ rec {
             features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
           }
           {
-            name = "rustix";
-            packageId = "rustix";
-            features = [ "process" "rand" ];
-          }
-          {
             name = "serde";
             packageId = "serde";
             features = [ "derive" ];
@@ -550,13 +545,13 @@ rec {
           }
         ];
         features = {
-          "text" = [ "datom" "dep:protos" "dep:datom-codec" "signal-capsule-nexus/datom" "shared-translator/text" "translator-serving/text" ];
+          "text" = [ "datom" "dep:protos" "dep:datom-codec" "signal-capsule-nexus/datom" "shared-translator/text" "translator-client/datom" "translator-serving/text" ];
         };
         resolvedDefaultFeatures = [ "datom" "default" "text" ];
       };
       "capsule-nexus-wire" = rec {
         crateName = "capsule-nexus-wire";
-        version = "0.8.0";
+        version = "0.9.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/wire; };
         libName = "capsule_nexus_wire";
@@ -775,7 +770,7 @@ rec {
       };
       "emission-capsule-nexus" = rec {
         crateName = "emission-capsule-nexus";
-        version = "0.4.0";
+        version = "0.5.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/emission; };
         libName = "emission_capsule_nexus";
@@ -784,6 +779,11 @@ rec {
             name = "datom-codec";
             packageId = "datom-codec";
             optional = true;
+          }
+          {
+            name = "nexus-exchange";
+            packageId = "nexus-exchange";
+            usesDefaultFeatures = false;
           }
           {
             name = "protos";
@@ -808,7 +808,7 @@ rec {
           }
         ];
         features = {
-          "datom" = [ "signal-capsule-nexus/datom" "dep:datom-codec" "dep:protos" ];
+          "datom" = [ "signal-capsule-nexus/datom" "nexus-exchange/datom" "dep:datom-codec" "dep:protos" ];
         };
         resolvedDefaultFeatures = [ "datom" "default" ];
       };
@@ -1705,13 +1705,13 @@ rec {
       };
       "nexus-exchange" = rec {
         crateName = "nexus-exchange";
-        version = "0.1.1";
+        version = "0.2.0";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/nexus";
-          rev = "63a2d477ca194913c847d15f227637d84fbe9aeb";
-          sha256 = "09xh9bps4i0yzcwj3ly4skzwk40pi50xga66032fd2cz9lq66b9p";
+          rev = "fb3441f952ecba19dd3e9f288a39e7275f8ae700";
+          sha256 = "13dkff8q4wvsqq9i4hg0m1w1c4qw3xlr9wyv3x8dlzvpx18xdvzs";
         };
         libName = "nexus_exchange";
         dependencies = [
@@ -1751,13 +1751,13 @@ rec {
       };
       "nexus-querying" = rec {
         crateName = "nexus-querying";
-        version = "0.1.1";
+        version = "0.2.0";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/nexus";
-          rev = "63a2d477ca194913c847d15f227637d84fbe9aeb";
-          sha256 = "09xh9bps4i0yzcwj3ly4skzwk40pi50xga66032fd2cz9lq66b9p";
+          rev = "fb3441f952ecba19dd3e9f288a39e7275f8ae700";
+          sha256 = "13dkff8q4wvsqq9i4hg0m1w1c4qw3xlr9wyv3x8dlzvpx18xdvzs";
         };
         libName = "nexus_querying";
         dependencies = [
@@ -1781,13 +1781,13 @@ rec {
       };
       "nexus-serving" = rec {
         crateName = "nexus-serving";
-        version = "0.1.1";
+        version = "0.2.0";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/nexus";
-          rev = "63a2d477ca194913c847d15f227637d84fbe9aeb";
-          sha256 = "09xh9bps4i0yzcwj3ly4skzwk40pi50xga66032fd2cz9lq66b9p";
+          rev = "fb3441f952ecba19dd3e9f288a39e7275f8ae700";
+          sha256 = "13dkff8q4wvsqq9i4hg0m1w1c4qw3xlr9wyv3x8dlzvpx18xdvzs";
         };
         libName = "nexus_serving";
         dependencies = [
@@ -3139,20 +3139,30 @@ rec {
       };
       "translator-client" = rec {
         crateName = "translator-client";
-        version = "0.1.1";
+        version = "0.2.0";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/translator";
-          rev = "8e744a4503f13dd748e7e222f5f7aa5443b28961";
-          sha256 = "0nkkipr4nqs1w5sj8g8a3y1a7dqg562x7di1k7hh1h98spvq8c2g";
+          rev = "0b44de796a984e02d2ee96bdd4729bf8acd2a79b";
+          sha256 = "1f0blyal7fswcriz11iihdv7xl56rcx7ravcla1rf0m41hhafyr2";
         };
         libName = "translator_client";
         dependencies = [
           {
+            name = "datom-codec";
+            packageId = "datom-codec";
+            optional = true;
+          }
+          {
             name = "nexus-exchange";
             packageId = "nexus-exchange";
             usesDefaultFeatures = false;
+          }
+          {
+            name = "protos";
+            packageId = "protos";
+            optional = true;
           }
           {
             name = "rkyv";
@@ -3174,18 +3184,19 @@ rec {
           }
         ];
         features = {
-          "datom" = [ "dep:datom-codec" "dep:protos" "nexus-exchange/datom" ];
+          "datom" = [ "dep:datom-codec" "dep:protos" "nexus-exchange/datom" "shared-translator/datom" ];
         };
+        resolvedDefaultFeatures = [ "datom" ];
       };
       "translator-serving" = rec {
         crateName = "translator-serving";
-        version = "0.1.1";
+        version = "0.2.0";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/translator";
-          rev = "8e744a4503f13dd748e7e222f5f7aa5443b28961";
-          sha256 = "0nkkipr4nqs1w5sj8g8a3y1a7dqg562x7di1k7hh1h98spvq8c2g";
+          rev = "0b44de796a984e02d2ee96bdd4729bf8acd2a79b";
+          sha256 = "1f0blyal7fswcriz11iihdv7xl56rcx7ravcla1rf0m41hhafyr2";
         };
         libName = "translator_serving";
         dependencies = [
@@ -3224,6 +3235,11 @@ rec {
             packageId = "rkyv";
             usesDefaultFeatures = false;
             features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+          {
+            name = "rustix";
+            packageId = "rustix";
+            features = [ "rand" ];
           }
           {
             name = "signal";

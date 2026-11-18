@@ -49,25 +49,42 @@ done
 
 meta="$package/bin/capsule-meta"
 public="$package/bin/capsule"
-"$meta" one "Configure.HerdrPath.$base/herdr-fixture" >/dev/null
-"$meta" one 'Configure.CallTimeout.50' >/dev/null
-"$meta" one 'Configure.OutputLimit.1048576' >/dev/null
-"$meta" one 'Configure.TextBudget.{ 1048576 64 }' >/dev/null
-"$meta" one 'Configure.StartTimeout.1000' >/dev/null
-"$meta" one 'Configure.Polling.100' >/dev/null
-"$meta" one 'Configure.FrameCapacity.8388608' >/dev/null
-"$meta" one 'Configure.SubscriberCapacity.8' >/dev/null
-"$meta" one 'Configure.TransportTimeout.50' | grep -q Ready
 
-"$public" one "Create.{ main $workspace [] }" | grep -q 'Created.Created'
+# A CLI takes its datom alone; its place is its configuration's. With none,
+# or one it cannot understand, it refuses naming the file, exit 2, and sends
+# nothing.
+export XDG_CONFIG_HOME=$base/config
+configuration=$XDG_CONFIG_HOME/nexus/capsule.datom
+status=0
+"$meta" 'Configure.Polling.100' 2>"$base/missing.err" || status=$?
+(( status == 2 ))
+grep -q "^Missing\..*$configuration" "$base/missing.err"
+mkdir -p "$XDG_CONFIG_HOME/nexus"
+printf '{ }\n' >"$configuration"
+status=0
+"$public" 'List.main' 2>"$base/invalid.err" || status=$?
+(( status == 2 ))
+grep -q "^Invalid\..*$configuration" "$base/invalid.err"
+printf '{ one }\n' >"$configuration"
+"$meta" "Configure.HerdrPath.$base/herdr-fixture" >/dev/null
+"$meta" 'Configure.CallTimeout.50' >/dev/null
+"$meta" 'Configure.OutputLimit.1048576' >/dev/null
+"$meta" 'Configure.TextBudget.{ 1048576 64 }' >/dev/null
+"$meta" 'Configure.StartTimeout.1000' >/dev/null
+"$meta" 'Configure.Polling.100' >/dev/null
+"$meta" 'Configure.FrameCapacity.8388608' >/dev/null
+"$meta" 'Configure.SubscriberCapacity.8' >/dev/null
+"$meta" 'Configure.TransportTimeout.50' | grep -q Ready
+
+"$public" "Create.{ main $workspace [] }" | grep -q 'Created.Created'
 began=$(date +%s%3N)
-"$public" one 'Start.{ { main w:p } { probe Codex Configured [] } label }' \
+"$public" 'Start.{ { main w:p } { probe Codex Configured [] } label }' \
   | grep -q 'Started.Done'
 ended=$(date +%s%3N)
 (( ended - began >= 150 ))
 
-"$meta" one 'Configure.StartTimeout.40' >/dev/null
-"$public" one 'Start.{ { main w:p } { probe Codex Configured [] } label }' \
+"$meta" 'Configure.StartTimeout.40' >/dev/null
+"$public" 'Start.{ { main w:p } { probe Codex Configured [] } label }' \
   | grep -q Uncertain
 
 echo DELAYED_START_OK

@@ -1,6 +1,6 @@
 [package]
 name = "capsule-nexus-translator"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 publish = false
 
@@ -14,7 +14,6 @@ translator-client.workspace = true
 translator-serving.workspace = true
 core-meta-capsule-nexus = { path = "../core-meta" }
 nix = { version = "0.30", features = ["fs", "poll", "process", "signal", "socket", "user"] }
-rustix = { version = "1", features = ["process", "rand"] }
 rkyv = { version = "0.8", features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 signal = { git = "https://github.com/LiGoldragon/signal", rev = "4f5cbb9" }
 protos = { git = "https://github.com/LiGoldragon/protos", rev = "c93b598", optional = true }
@@ -33,7 +32,7 @@ features = ["unix"]
 
 [features]
 default = []
-text = ["datom", "dep:protos", "dep:datom-codec", "signal-capsule-nexus/datom", "shared-translator/text", "translator-serving/text"]
+text = ["datom", "dep:protos", "dep:datom-codec", "signal-capsule-nexus/datom", "shared-translator/text", "translator-client/datom", "translator-serving/text"]
 datom = []
 
 

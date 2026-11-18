@@ -4,7 +4,6 @@
     non_snake_case,
     clippy::type_complexity
 )]
-use crate::transport_types as transport;
 use crate::public_payload;
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]

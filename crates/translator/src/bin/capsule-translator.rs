@@ -3,6 +3,6 @@ use translator_serving::{BootstrapReading, TranslatorBootstrap, TranslatorServin
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bootstrap = TranslatorBootstrap::read_standard_input()?;
-    CapsuleTranslator::default().serve(&bootstrap)?;
+    CapsuleTranslator::try_from(&bootstrap)?.serve(&bootstrap)?;
     Ok(())
 }

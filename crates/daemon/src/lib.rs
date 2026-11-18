@@ -5,7 +5,7 @@
 use capsule_nexus_wire::CapsuleNexus;
 use meta_signal_capsule_nexus::{BootstrapRefusal, Message, SocketPath};
 use nexus_serving::{
-    Closable, Closing, EmissionFailure, EmissionLane, Emitting, Listeners, Listening,
+    Closable, Closing, EmissionLane, Emitting, LaneFailure, Listeners, Listening,
     MetaAnswering, PeerAdmitting, PublicServing, Reply, SubscriptionClosing, TransportBounded,
 };
 use std::sync::{Arc, RwLock};
@@ -1047,12 +1047,15 @@ impl ExternalEmitter for SocketEmitter {
             configuration.transport_timeout,
             configuration.frame_capacity_bytes,
         );
+        // A failed lane is the outcome's own variant: the effect not done is
+        // the translator unavailable, the effect perhaps done is uncertain,
+        // and neither is ever an outcome the world answered.
         match emitted {
-            Ok(emission_capsule_nexus::Output::Emitted(outcome)) => EmissionResult::External(outcome),
-            Err(EmissionFailure::Unsubmitted(message)) => {
-                unavailable_transport(self.lane.translator_socket(), message)
-            }
-            Err(EmissionFailure::Unanswered(_)) => {
+            emission_capsule_nexus::Output::Emitted(outcome) => EmissionResult::External(outcome),
+            emission_capsule_nexus::Output::LaneFailed(
+                LaneFailure::Unsubmitted(fault) | LaneFailure::Declined(fault),
+            ) => unavailable_transport(self.lane.translator_socket(), fault.0),
+            emission_capsule_nexus::Output::LaneFailed(LaneFailure::Unanswered(_)) => {
                 EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Uncertain)
             }
         }
@@ -2194,6 +2197,85 @@ mod tests {
         std::fs::remove_dir_all(directory).expect("fixture cleanup");
     }
 
+    /// A failed emission lane reaches the caller as the lane's failure,
+    /// apart from every outcome the world answers: the translator not
+    /// reached or declining is unavailable, an answer not read is uncertain,
+    /// and a close whose lane failed never reads as a pane already gone.
+    #[test]
+    fn a_failed_emission_lane_is_never_an_outcome_the_world_answered() {
+        use emission_capsule_nexus::{ExternalOutcome, Herdr, Verb};
+        use nexus_exchange::lane::{Kind, Lane, LaneReading, LaneWriting};
+        use std::os::unix::net::UnixListener;
+
+        let directory = std::env::temp_dir().join(format!(
+            "herdr-emitter-lane-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir(&directory).expect("fixture directory");
+        let herdr = Herdr {
+            session: signal_capsule_nexus::Session("lane".into()),
+            verb: Verb::PaneClose(signal_capsule_nexus::PaneId("pane".into())),
+        };
+        let configuration = test_configuration();
+        let translator = |name: &str, answer: Option<nexus_exchange::lane::Frame>| {
+            let socket = directory.join(name);
+            let listener = UnixListener::bind(&socket).expect("translator listener");
+            let answering = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().expect("Nexus connection");
+                LaneReading::read_lane_frame(&mut stream, signal::MAXIMUM_SIGNAL_BYTES)
+                    .expect("emission request");
+                if let Some(answer) = answer {
+                    LaneWriting::write_lane_frame(&mut stream, &answer, signal::MAXIMUM_SIGNAL_BYTES)
+                        .expect("emission answer");
+                }
+            });
+            (SocketEmitter { lane: EmissionLane::from(socket) }, answering)
+        };
+
+        let unreached = SocketEmitter {
+            lane: EmissionLane::from(directory.join("absent.sock")),
+        };
+        let outcome = unreached.emit(&configuration, herdr.clone());
+        assert!(matches!(outcome, EmissionResult::Unavailable(_)));
+        assert!(matches!(
+            closed_result(outcome),
+            capsule_nexus_core::ExternalResult::Unavailable(_)
+        ));
+
+        let (declining, answering) = translator(
+            "declining.sock",
+            Some(nexus_exchange::lane::Frame {
+                lane: Lane::EmissionSignal,
+                kind: Kind::Failed,
+                payload: b"translator is awaiting settings".to_vec(),
+            }),
+        );
+        let outcome = declining.emit(&configuration, herdr.clone());
+        answering.join().expect("declining translator");
+        assert!(
+            matches!(&outcome, EmissionResult::Unavailable(refusal)
+                if refusal.message.0 == "translator is awaiting settings"),
+        );
+        assert!(matches!(
+            closed_result(outcome),
+            capsule_nexus_core::ExternalResult::Unavailable(_)
+        ));
+
+        let (silent, answering) = translator("silent.sock", None);
+        let outcome = silent.emit(&configuration, herdr);
+        answering.join().expect("silent translator");
+        assert!(matches!(
+            outcome,
+            EmissionResult::External(ExternalOutcome::Uncertain)
+        ));
+        assert!(matches!(
+            closed_result(outcome),
+            capsule_nexus_core::ExternalResult::Uncertain
+        ));
+        std::fs::remove_dir_all(directory).expect("fixture cleanup");
+    }
+
     #[test]
     fn four_unowned_mutations_stop_before_the_emitter() {
         use signal_capsule_nexus::{
@@ -3142,13 +3224,26 @@ mod tests {
         let first = querying.open(public_query(&pane.session.0, &caller)).expect("first open");
         let second = querying.open(public_query("elsewhere", &caller)).expect("second open");
         assert_ne!(first, second);
+        // Each one-answer exchange is answered, then ended Completed after
+        // its answer, as every exchange ends.
         let mut answered = Vec::new();
-        for _ in 0..2 {
+        let mut ended = Vec::new();
+        for _ in 0..4 {
             match querying.delivery().expect("delivery") {
-                Some(Delivery::Answer(answer)) => answered.push((answer.exchange, answer.response)),
-                other => panic!("a one-answer exchange is answered, got {other:?}"),
+                Some(Delivery::Answer(answer)) => {
+                    assert!(!ended.contains(&answer.exchange), "an answer after its end");
+                    answered.push((answer.exchange, answer.response));
+                }
+                Some(Delivery::End(ending)) => {
+                    assert_eq!(ending.conclusion, signal::Conclusion::Completed);
+                    assert!(answered.iter().any(|(exchange, _)| *exchange == ending.exchange));
+                    ended.push(ending.exchange);
+                }
+                other => panic!("a one-answer exchange is answered and ended, got {other:?}"),
             }
         }
+        ended.sort();
+        assert_eq!(ended, [first, second]);
         answered.sort_by_key(|(exchange, _)| *exchange);
         assert!(matches!(
             &answered[0],

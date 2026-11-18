@@ -9,6 +9,14 @@ impl signal::Contracted for Input {
     const CONTRACT_SOURCE: &'static str = ETHOS;
 }
 
+/// An emission whose lane failed is answered by its own variant, apart from
+/// every outcome the translator observed in the world.
+impl nexus_exchange::LaneFailing for Output {
+    fn lane_failed(lane_failure: nexus_exchange::LaneFailure) -> Self {
+        Self::LaneFailed(lane_failure)
+    }
+}
+
 const MANAGED_WORKSPACE_PREFIX: &str = "capsule-nexus-v0:";
 
 /// Encodes the creation correlation into the one external workspace label.

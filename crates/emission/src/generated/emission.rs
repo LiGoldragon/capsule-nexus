@@ -131,6 +131,7 @@ pub enum Input {
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub enum Output {
     Emitted(ExternalOutcome),
+    LaneFailed(nexus_exchange::LaneFailure),
 }
 #[rustfmt::skip]
 #[allow(clippy::result_large_err, clippy::ptr_arg, clippy::borrowed_box)]
