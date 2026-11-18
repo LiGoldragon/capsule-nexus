@@ -1,6 +1,6 @@
 [package]
 name = "capsule-nexus-daemon"
-version = "0.6.0"
+version = "0.7.0"
 edition.workspace = true
 rust-version.workspace = true
 publish = false
@@ -14,12 +14,17 @@ signal-capsule-nexus.workspace = true
 meta-signal-capsule-nexus.workspace = true
 signal.workspace = true
 nexus.workspace = true
+nexus-serving.workspace = true
 shared-translator.workspace = true
 kameo.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
 futures-util = { workspace = true }
 nix = { version = "0.30", features = ["fs", "poll", "user"] }
 rustix = { version = "1", features = ["event", "process"] }
+
+[dev-dependencies]
+nexus-exchange.workspace = true
+nexus-querying.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"

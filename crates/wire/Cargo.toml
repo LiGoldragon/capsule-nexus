@@ -1,6 +1,6 @@
 [package]
 name = "capsule-nexus-wire"
-version = "0.6.0"
+version = "0.7.0"
 edition.workspace = true
 rust-version.workspace = true
 publish = false
@@ -14,6 +14,7 @@ datom = [
   "core-meta-capsule-nexus/datom",
   "meta-signal-capsule-nexus/datom",
   "shared-translator/datom",
+  "nexus-exchange/datom",
 ]
 
 [dependencies]
@@ -25,8 +26,7 @@ signal-capsule-nexus = { workspace = true }
 core-meta-capsule-nexus = { path = "../core-meta" }
 meta-signal-capsule-nexus.workspace = true
 shared-translator.workspace = true
-nix = { version = "0.30", features = ["socket"] }
-libc = "0.2"
+nexus-exchange.workspace = true
 # The shared feature set requires these dependency edges in the Cargo graph.
 tokio = { version = "1.53", default-features = false, features = ["macros", "io-util", "net", "signal", "time", "tracing"] }
 mio = { version = "1.2", features = ["log"] }

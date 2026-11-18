@@ -329,7 +329,7 @@ rec {
       };
       "capsule-nexus-daemon" = rec {
         crateName = "capsule-nexus-daemon";
-        version = "0.6.0";
+        version = "0.7.0";
         edition = "2021";
         crateBin = [
           {
@@ -377,6 +377,11 @@ rec {
             usesDefaultFeatures = false;
           }
           {
+            name = "nexus-serving";
+            packageId = "nexus-serving";
+            usesDefaultFeatures = false;
+          }
+          {
             name = "nix";
             packageId = "nix";
             features = [ "fs" "poll" "user" ];
@@ -410,11 +415,23 @@ rec {
             features = [ "unix" ];
           }
         ];
+        devDependencies = [
+          {
+            name = "nexus-exchange";
+            packageId = "nexus-exchange";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "nexus-querying";
+            packageId = "nexus-querying";
+            usesDefaultFeatures = false;
+          }
+        ];
 
       };
       "capsule-nexus-translator" = rec {
         crateName = "capsule-nexus-translator";
-        version = "0.6.0";
+        version = "0.7.0";
         edition = "2021";
         crateBin = [
           {
@@ -474,6 +491,16 @@ rec {
             features = [ "datom" ];
           }
           {
+            name = "nexus-exchange";
+            packageId = "nexus-exchange";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "nexus-querying";
+            packageId = "nexus-querying";
+            usesDefaultFeatures = false;
+          }
+          {
             name = "nix";
             packageId = "nix";
             features = [ "fs" "poll" "process" "signal" "socket" "user" ];
@@ -524,7 +551,7 @@ rec {
       };
       "capsule-nexus-wire" = rec {
         crateName = "capsule-nexus-wire";
-        version = "0.6.0";
+        version = "0.7.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/wire; };
         libName = "capsule_nexus_wire";
@@ -539,10 +566,6 @@ rec {
             optional = true;
           }
           {
-            name = "libc";
-            packageId = "libc";
-          }
-          {
             name = "meta-signal-capsule-nexus";
             packageId = "meta-signal-capsule-nexus";
             usesDefaultFeatures = false;
@@ -553,9 +576,9 @@ rec {
             features = [ "log" ];
           }
           {
-            name = "nix";
-            packageId = "nix";
-            features = [ "socket" ];
+            name = "nexus-exchange";
+            packageId = "nexus-exchange";
+            usesDefaultFeatures = false;
           }
           {
             name = "protos";
@@ -593,7 +616,7 @@ rec {
           }
         ];
         features = {
-          "datom" = [ "dep:datom-codec" "dep:protos" "signal-capsule-nexus/datom" "core-meta-capsule-nexus/datom" "meta-signal-capsule-nexus/datom" "shared-translator/datom" ];
+          "datom" = [ "dep:datom-codec" "dep:protos" "signal-capsule-nexus/datom" "core-meta-capsule-nexus/datom" "meta-signal-capsule-nexus/datom" "shared-translator/datom" "nexus-exchange/datom" ];
         };
         resolvedDefaultFeatures = [ "datom" "default" ];
       };
@@ -1678,6 +1701,152 @@ rec {
         ];
         features = {
           "datom" = [ "dep:datom-codec" "dep:protos" ];
+        };
+      };
+      "nexus-exchange" = rec {
+        crateName = "nexus-exchange";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/LiGoldragon/nexus";
+          rev = "8976179c940b4a822990f519515084cb62d3f908";
+          sha256 = "0n0rflgmy9fx5l99q2bwgqrd2ivw3by0digfsl1sya0ddcs0789l";
+        };
+        libName = "nexus_exchange";
+        dependencies = [
+          {
+            name = "datom-codec";
+            packageId = "datom-codec";
+            optional = true;
+          }
+          {
+            name = "protos";
+            packageId = "protos";
+            optional = true;
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            usesDefaultFeatures = false;
+            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+          {
+            name = "signal";
+            packageId = "signal";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "translator";
+            packageId = "translator";
+            rename = "shared-translator";
+            usesDefaultFeatures = false;
+            features = [ "unix" ];
+          }
+        ];
+        features = {
+          "datom" = [ "dep:datom-codec" "dep:protos" "signal/datom" "shared-translator/datom" ];
+        };
+        resolvedDefaultFeatures = [ "datom" "default" ];
+      };
+      "nexus-querying" = rec {
+        crateName = "nexus-querying";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/LiGoldragon/nexus";
+          rev = "8976179c940b4a822990f519515084cb62d3f908";
+          sha256 = "0n0rflgmy9fx5l99q2bwgqrd2ivw3by0digfsl1sya0ddcs0789l";
+        };
+        libName = "nexus_querying";
+        dependencies = [
+          {
+            name = "nexus-exchange";
+            packageId = "nexus-exchange";
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            usesDefaultFeatures = false;
+            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+          {
+            name = "signal";
+            packageId = "signal";
+            usesDefaultFeatures = false;
+          }
+        ];
+
+      };
+      "nexus-serving" = rec {
+        crateName = "nexus-serving";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/LiGoldragon/nexus";
+          rev = "8976179c940b4a822990f519515084cb62d3f908";
+          sha256 = "0n0rflgmy9fx5l99q2bwgqrd2ivw3by0digfsl1sya0ddcs0789l";
+        };
+        libName = "nexus_serving";
+        dependencies = [
+          {
+            name = "futures-channel";
+            packageId = "futures-channel";
+            usesDefaultFeatures = false;
+            features = [ "sink" ];
+          }
+          {
+            name = "futures-util";
+            packageId = "futures-util";
+            usesDefaultFeatures = false;
+            features = [ "std" "async-await-macro" "channel" "io" "sink" ];
+          }
+          {
+            name = "mio";
+            packageId = "mio";
+            features = [ "log" ];
+          }
+          {
+            name = "nexus-exchange";
+            packageId = "nexus-exchange";
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            usesDefaultFeatures = false;
+            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+          {
+            name = "signal";
+            packageId = "signal";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            usesDefaultFeatures = false;
+            features = [ "rt" "net" "io-util" "time" "sync" "macros" "signal" "tracing" ];
+          }
+          {
+            name = "translator";
+            packageId = "translator";
+            rename = "shared-translator";
+            usesDefaultFeatures = false;
+            features = [ "unix" ];
+          }
+        ];
+        devDependencies = [
+          {
+            name = "tokio";
+            packageId = "tokio";
+            usesDefaultFeatures = false;
+            features = [ "rt-multi-thread" "net" "io-util" "time" "sync" "macros" ];
+          }
+        ];
+        features = {
+          "datom" = [ "dep:datom-codec" "dep:protos" "nexus-exchange/datom" ];
         };
       };
       "nix" = rec {

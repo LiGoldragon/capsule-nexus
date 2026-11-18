@@ -1,4 +1,4 @@
-use capsule_nexus_translator::transport_types::Lane;
+use capsule_nexus_translator::transport::Lane;
 use capsule_nexus_translator::TextClient;
 use std::env;
 

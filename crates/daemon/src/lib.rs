@@ -1,73 +1,31 @@
-//! Daemon configuration lifecycle, independent of socket serving.
+//! The Capsule Nexus daemon: its configuration lifecycle, its actor and the
+//! bodies its sockets are served with. The serving itself is every Nexus's,
+//! in `nexus-serving`.
 
+use capsule_nexus_wire::CapsuleNexus;
 use meta_signal_capsule_nexus::{BootstrapRefusal, Message, SocketPath};
+use nexus_serving::{
+    Closable, Closing, EmissionFailure, EmissionLane, Emitting, Listeners, Listening,
+    MetaAnswering, PeerAdmitting, PublicServing, Reply, SubscriptionClosing, TransportBounded,
+};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-pub use capsule_nexus_wire::deadline::DeadlineStream;
+#[cfg(test)]
+use nexus_serving::ConnectionServing;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SocketPaths {
-    pub public: std::path::PathBuf,
-    pub meta: std::path::PathBuf,
-    pub translator: std::path::PathBuf,
-    pub meta_translator: std::path::PathBuf,
-}
+/// The Capsule Nexus's four socket paths in its place.
+pub type SocketPaths = nexus_serving::SocketPaths<CapsuleNexus>;
 
-impl From<&shared_translator::placement::Place> for SocketPaths {
-    fn from(place: &shared_translator::placement::Place) -> Self {
-        let directory = shared_translator::placement::runtime_path(place);
-        let names = capsule_nexus_wire::socket_names();
-        Self {
-            public: directory.join(names.public_nexus_socket.0),
-            meta: directory.join(names.meta_nexus_socket.0),
-            translator: directory.join(names.public_translator_socket.0),
-            meta_translator: directory.join(names.meta_translator_socket.0),
-        }
-    }
-}
+/// One accepted public connection, with the authority it was admitted under.
+pub type AcceptedPublic = nexus_serving::AcceptedPublic<PublicAuthority>;
 
-struct OwnedListener {
-    listener: std::os::unix::net::UnixListener,
-    path: std::path::PathBuf,
-    device: u64,
-    inode: u64,
-}
-
-impl OwnedListener {
-    fn bind(path: std::path::PathBuf) -> std::io::Result<Self> {
-        use std::os::unix::fs::MetadataExt;
-        let listener = std::os::unix::net::UnixListener::bind(&path)?;
-        let metadata = std::fs::metadata(&path)?;
-        Ok(Self {
-            listener,
-            path,
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        })
-    }
-}
-
-impl Drop for OwnedListener {
-    fn drop(&mut self) {
-        use std::os::unix::fs::MetadataExt;
-        let still_ours = std::fs::metadata(&self.path)
-            .map(|metadata| metadata.dev() == self.device && metadata.ino() == self.inode)
-            .unwrap_or(false);
-        if still_ours {
-            let _ = std::fs::remove_file(&self.path);
-        }
-    }
-}
+/// One public connection, served with the Dispatcher's bodies.
+pub type PublicConnection = nexus_serving::PublicConnection<Dispatcher>;
 
 pub struct Bootstrap {
-    paths: SocketPaths,
+    listeners: Listeners<CapsuleNexus>,
     store: Arc<ConfigurationStore>,
-    meta: OwnedListener,
-    public: std::sync::Mutex<Option<OwnedListener>>,
-    public_ready: std::sync::Condvar,
-    admission: capsule_nexus_wire::ValidAdmission,
-    translator_peer: BoundPeer,
 }
 
 impl Bootstrap {
@@ -76,16 +34,9 @@ impl Bootstrap {
         admission: capsule_nexus_wire::ValidAdmission,
         translator_peer: shared_translator::PeerIdentity,
     ) -> std::io::Result<Self> {
-        let paths = SocketPaths::from(place);
-        let meta = OwnedListener::bind(paths.meta.clone())?;
         Ok(Self {
-            paths,
+            listeners: Listeners::bind(place, admission, translator_peer)?,
             store: Arc::new(ConfigurationStore::default()),
-            meta,
-            public: std::sync::Mutex::new(None),
-            public_ready: std::sync::Condvar::new(),
-            admission,
-            translator_peer: BoundPeer::capture(translator_peer)?,
         })
     }
 
@@ -95,22 +46,15 @@ impl Bootstrap {
     ) -> core_meta_capsule_nexus::Output {
         let mut staged = None;
         let response = self.store.configure(setting, || {
-            let listener = OwnedListener::bind(self.paths.public.clone()).map_err(|error| {
-                BootstrapRefusal {
-                    socket_path: SocketPath(self.paths.public.display().to_string()),
-                    message: Message(error.to_string()),
-                }
+            let listener = self.listeners.stage_public().map_err(|error| BootstrapRefusal {
+                socket_path: SocketPath(self.listeners.paths().public.display().to_string()),
+                message: Message(error.to_string()),
             })?;
             staged = Some(listener);
             Ok(())
         });
         if let Some(listener) = staged {
-            let mut public = self
-                .public
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            *public = Some(listener);
-            self.public_ready.notify_all();
+            self.listeners.publish_public(listener);
         }
         response
     }
@@ -124,76 +68,37 @@ impl Bootstrap {
     }
 
     pub fn serve_next_meta(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let (stream, _) = capsule_nexus_wire::accept_with_retry(
-            &self.meta.listener,
-            self.admission.retry_delay,
-        )?;
-        let exchange = (|| -> Result<(), Box<dyn std::error::Error>> {
-            require_peer(&stream, &self.translator_peer)?;
-            let mut stream = DeadlineStream::new(stream, self.admission.deadline)?;
-            serve_meta_connection(
-                &mut stream,
-                signal::FrameCapacity::from(self.admission.frame_capacity),
-                |candidate| self.configure(candidate),
-            )
-        })();
-        if let Err(error) = exchange {
-            eprintln!("Capsule Nexus meta connection failed: {error}");
-        }
-        Ok(())
+        self.listeners.serve_next_meta(self)
     }
 
     pub fn accept_public(&self) -> std::io::Result<AcceptedPublic> {
-        let mut public = self
-            .public
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        while public.is_none() {
-            public = self
-                .public_ready
-                .wait(public)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-        }
-        loop {
-            let stream = capsule_nexus_wire::accept_with_retry(
-                &public
-                .as_ref()
-                .expect("public listener notified only after binding")
-                .listener,
-                self.admission.retry_delay,
-            )?.0;
-            let actual = match capsule_nexus_wire::frame::peer_caller(&stream) {
-                Ok(actual) => actual,
-                Err(error) => {
-                    eprintln!("Capsule Nexus public peer lookup failed: {error}");
-                    continue;
-                }
-            };
-            if self.translator_peer.matches(&actual) {
-                return Ok(AcceptedPublic { stream, authority: PublicAuthority::Translator });
-            }
-            match self.store.peer_for(&actual) {
-                Some((peer_id, generation)) => return Ok(AcceptedPublic {
-                    stream,
-                    authority: PublicAuthority::Peer { peer_id, generation },
-                }),
-                None => eprintln!("Capsule Nexus rejected unconfigured public peer"),
-            }
-        }
+        self.listeners.accept_public(&*self.store)
     }
 
     pub fn paths(&self) -> &SocketPaths {
-        &self.paths
+        self.listeners.paths()
     }
 
     pub fn admission(&self) -> capsule_nexus_wire::ValidAdmission {
-        self.admission
+        self.listeners.admission()
     }
 }
 
-pub struct AcceptedPublic {
-    pub stream: std::os::unix::net::UnixStream,
-    pub authority: PublicAuthority,
+/// The meta socket answers each Call with what configuring its setting
+/// answers.
+impl MetaAnswering for Bootstrap {
+    type Query = capsule_nexus_wire::meta_call::Input;
+    type Response = capsule_nexus_wire::meta_call::Output;
+
+    fn answer(&self, input: Self::Query) -> Self::Response {
+        let capsule_nexus_wire::meta_call::Input::Call(call) = input;
+        let response = match call.meta_input.0 {
+            core_meta_capsule_nexus::Input::Configure(setting) => self.configure(setting),
+        };
+        capsule_nexus_wire::meta_call::Output::Answered(capsule_nexus_wire::meta_payload::Output(
+            response,
+        ))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -208,6 +113,21 @@ impl PublicAuthority {
             Self::Translator => None,
             Self::Peer { peer_id, generation } => Some((peer_id.clone(), *generation)),
         }
+    }
+}
+
+/// The public socket admits, besides the paired translator, each peer bound
+/// by a meta Configure, under the generation it was bound with.
+impl PeerAdmitting for ConfigurationStore {
+    type Authority = PublicAuthority;
+
+    fn translator() -> PublicAuthority {
+        PublicAuthority::Translator
+    }
+
+    fn peer(&self, caller: &shared_translator::Caller) -> Option<PublicAuthority> {
+        self.peer_for(caller)
+            .map(|(peer_id, generation)| PublicAuthority::Peer { peer_id, generation })
     }
 }
 
@@ -233,564 +153,111 @@ pub fn principal_for(
     }
 }
 
-fn require_peer(
-    stream: &std::os::unix::net::UnixStream,
-    expected: &BoundPeer,
-) -> std::io::Result<()> {
-    let actual = capsule_nexus_wire::frame::peer_caller(stream)
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
-    if expected.matches(&actual) {
-        Ok(())
-    } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "peer is not the paired translator",
-        ))
-    }
-}
+/// Who an exchange is answered for: its principal, and the peer grant it was
+/// admitted under.
+pub type PublicGrant = (shared_translator::Principal, Option<(shared_translator::PeerId, u64)>);
 
-/// Serves one meta connection, the whole of it within the deadline its stream
-/// carries: the greeting, then each exchange in turn, each answered with its
-/// one Answer, until the translator closes the connection. The caller
-/// supplies the startup capacity; no runtime default is hidden here.
-pub fn serve_meta_connection<S>(
-    stream: &mut S,
-    capacity: signal::FrameCapacity,
-    mut configure: impl FnMut(core_meta_capsule_nexus::CoreSet) -> core_meta_capsule_nexus::Output,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    S: std::io::Read + std::io::Write,
-{
-    use capsule_nexus_wire::exchange::{read_frame_or_end, restored};
-    use capsule_nexus_wire::meta_call::{Input, Output};
-    use signal::{
-        Answer, Contracted, Delivery, Dispatch, Ending, ExchangeFault, ExchangeLedger,
-        ExchangeTracking, Exchanged, FrameWriting, Greeted, HandshakeReceipt, Signalizable,
-    };
-    let mut ledger = ExchangeLedger::default();
-    let deliver = |stream: &mut S, delivery: Delivery<Output>| -> Result<(), Box<dyn std::error::Error>> {
-        stream.write_frame(&delivery.signalize()?, capacity)?;
-        Ok(())
-    };
-    while let Some(body) = read_frame_or_end(stream, capacity)? {
-        let Ok(dispatch) = restored::<Dispatch<Input>>(body) else {
-            return deliver(stream, Delivery::End(Ending::connection_faulted(ExchangeFault::UnreadableQuery)));
-        };
-        match dispatch {
-            Dispatch::Greet(greeting) => {
-                if let Err(fault) = ledger.greet() {
-                    return deliver(stream, Delivery::End(Ending::connection_faulted(fault)));
-                }
-                let receipt = Input::receipt(&greeting);
-                let settled = matches!(receipt, HandshakeReceipt::Greeted(_));
-                deliver(stream, Delivery::Greeted(receipt))?;
-                if !settled {
-                    return Ok(());
-                }
-            }
-            Dispatch::Open(opening) => {
-                if let Err(fault) = ledger.require_greeting() {
-                    return deliver(stream, Delivery::End(Ending::connection_faulted(fault)));
-                }
-                if let Err(fault) = ledger.admit(opening.exchange) {
-                    let ending = Ending::faulted(opening.exchange, fault);
-                    let connection_wide = ending.is_connection_wide();
-                    deliver(stream, Delivery::End(ending))?;
-                    if connection_wide {
-                        return Ok(());
-                    }
-                    continue;
-                }
-                let Input::Call(call) = opening.query;
-                let response = match call.meta_input.0 {
-                    core_meta_capsule_nexus::Input::Configure(setting) => configure(setting),
-                };
-                ledger
-                    .release(opening.exchange)
-                    .map_err(|fault| format!("meta exchange release failed: {fault:?}"))?;
-                deliver(stream, Delivery::Answer(Answer {
-                    exchange: opening.exchange,
-                    response: Output::Answered(capsule_nexus_wire::meta_payload::Output(response)),
-                }))?;
-            }
-            Dispatch::Abandon(exchange) => {
-                // Every exchange is answered before the next frame is read,
-                // so none is open for the translator to abandon.
-                let fault = ledger.release(exchange).err().unwrap_or(ExchangeFault::UnknownExchange);
-                deliver(stream, Delivery::End(Ending::faulted(exchange, fault)))?;
-            }
-        }
-    }
-    Ok(())
-}
+/// The public socket's bodies: every exchange is a Call carrying its Caller,
+/// admitted under the connection's authority, attempted on the state the
+/// [`Capsule`] actor owns, and answered once or, for a Subscribe, with the
+/// stream of the session's panes.
+impl PublicServing for Dispatcher {
+    type Component = CapsuleNexus;
+    type Query = capsule_nexus_wire::public_call::Input;
+    type Response = capsule_nexus_wire::public_call::Output;
+    type Output = signal_capsule_nexus::Output;
+    type State = signal_capsule_nexus::Panes;
+    type Change = signal_capsule_nexus::Known;
+    type Configuration = ReadyCoreConfiguration;
+    type Authority = PublicAuthority;
+    type Grant = PublicGrant;
+    type Input = signal_capsule_nexus::Input;
 
-/// One accepted public connection: one greeting, then any number of
-/// exchanges, each opened with a Call carrying its Caller.
-///
-/// The connection is served on the runtime. The authority is the
-/// connection's, taken from its peer credentials at accept. Each exchange is
-/// answered by a task of its own, its attempt on the blocking pool, so a slow
-/// external attempt holds no other exchange back; a Subscribe goes on
-/// answering on its exchange from its stream's task, woken by the next frame
-/// or by its end. Every frame is written whole, one at a time, within the
-/// configured transport timeout.
-pub struct PublicConnection {
-    writing: tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>,
-    ledger: std::sync::Mutex<signal::ExchangeLedger>,
-    /// The subscriptions open on this connection, or `None` once the
-    /// connection has ended.
-    subscriptions: std::sync::Mutex<Option<Vec<CarriedSubscription>>>,
-    /// Set once the connection ends, which wakes its reading.
-    ended: tokio::sync::watch::Sender<bool>,
-    authority: PublicAuthority,
-    caller: shared_translator::Caller,
-}
-
-/// A subscription open on an exchange of a connection.
-struct CarriedSubscription {
-    exchange: signal::ExchangeId,
-    closing: Arc<SubscriptionClosing>,
-}
-
-/// Whether a connection goes on after the frame it just handled.
-enum Continuation {
-    Going,
-    Ended,
-}
-
-impl PublicConnection {
-    /// Serves an accepted connection until the peer closes it or breaks the
-    /// protocol. The greeting must arrive within the transport timeout; after
-    /// it the connection may be quiet for as long as the peer likes.
-    pub async fn serve(
-        stream: std::os::unix::net::UnixStream,
-        authority: PublicAuthority,
-        dispatcher: Dispatcher,
-        configuration: Arc<ReadyCoreConfiguration>,
-    ) {
-        let caller = match capsule_nexus_wire::frame::peer_caller(&stream) {
-            Ok(caller) => caller,
-            Err(error) => {
-                eprintln!("Capsule Nexus public peer lookup failed: {error}");
-                return;
-            }
-        };
-        let stream = match stream
-            .set_nonblocking(true)
-            .and_then(|()| tokio::net::UnixStream::from_std(stream))
-        {
-            Ok(stream) => stream,
-            Err(error) => {
-                eprintln!("Capsule Nexus public connection failed: {error}");
-                return;
-            }
-        };
-        let (mut reading, writing) = stream.into_split();
-        let connection = Arc::new(Self {
-            writing: tokio::sync::Mutex::new(writing),
-            ledger: std::sync::Mutex::new(signal::ExchangeLedger::default()),
-            subscriptions: std::sync::Mutex::new(Some(Vec::new())),
-            ended: tokio::sync::watch::Sender::new(false),
-            authority,
-            caller,
-        });
-        if let Continuation::Going = connection.greeted(&mut reading, &configuration).await {
-            connection.listen(&mut reading, &dispatcher).await;
-        }
-        connection.end().await;
+    fn configuration(&self) -> Option<Arc<ReadyCoreConfiguration>> {
+        self.configuration.snapshot()
     }
 
-    async fn greeted(
+    /// A configured peer's binding is checked again for every exchange, and
+    /// a Caller that is not the connection's own peer ends the connection
+    /// unanswered.
+    fn admitted(
         &self,
-        reading: &mut tokio::net::unix::OwnedReadHalf,
-        configuration: &ReadyCoreConfiguration,
-    ) -> Continuation {
-        use capsule_nexus_wire::exchange::{read_frame_within_async, restored};
-        use signal::{Contracted, Delivery, Dispatch, Ending, ExchangeFault, Greeted, HandshakeReceipt};
-        let capacity = signal::FrameCapacity::from(configuration.frame_capacity_bytes);
-        let Ok(Some(body)) = read_frame_within_async(reading, configuration.transport_timeout, capacity).await else {
-            return Continuation::Ended;
-        };
-        match restored::<Dispatch<capsule_nexus_wire::public_call::Input>>(body) {
-            Ok(Dispatch::Greet(greeting)) => {
-                let receipt = capsule_nexus_wire::public_call::Input::receipt(&greeting);
-                let settled = matches!(receipt, HandshakeReceipt::Greeted(_));
-                if self.deliver(Delivery::Greeted(receipt), configuration).await.is_err() || !settled {
-                    return Continuation::Ended;
-                }
-                let _ = self.ledger.lock().unwrap_or_else(|p| p.into_inner()).greet();
-                Continuation::Going
-            }
-            Ok(_) => self.faulted(Ending::connection_faulted(ExchangeFault::GreetingExpected), configuration).await,
-            Err(_) => self.faulted(Ending::connection_faulted(ExchangeFault::UnreadableQuery), configuration).await,
-        }
-    }
-
-    /// Reads the greeted connection's frames until it ends.
-    async fn listen(self: &Arc<Self>, reading: &mut tokio::net::unix::OwnedReadHalf, dispatcher: &Dispatcher) {
-        use capsule_nexus_wire::exchange::{read_frame_after_idle_async, restored};
-        use signal::{Dispatch, Ending, ExchangeFault, FrameError};
-        let mut ended = self.ended.subscribe();
-        loop {
-            let Some(configuration) = dispatcher.configuration.snapshot() else {
-                return;
-            };
-            let capacity = signal::FrameCapacity::from(configuration.frame_capacity_bytes);
-            let read = tokio::select! {
-                biased;
-                _ = ended.changed() => return,
-                read = read_frame_after_idle_async(reading, configuration.transport_timeout, capacity) => read,
-            };
-            let body = match read {
-                Ok(Some(body)) => body,
-                Ok(None) | Err(FrameError::Io(_)) => return,
-                Err(FrameError::BodyTooLarge { .. }) => {
-                    self.faulted(Ending::connection_faulted(ExchangeFault::UnreadableQuery), &configuration).await;
-                    return;
-                }
-            };
-            let continuation = match restored::<Dispatch<capsule_nexus_wire::public_call::Input>>(body) {
-                Err(_) => self.faulted(Ending::connection_faulted(ExchangeFault::UnreadableQuery), &configuration).await,
-                Ok(Dispatch::Greet(_)) => {
-                    self.faulted(Ending::connection_faulted(ExchangeFault::GreetingRepeated), &configuration).await
-                }
-                Ok(Dispatch::Open(opening)) => self.opened(dispatcher, opening, configuration).await,
-                Ok(Dispatch::Abandon(exchange)) => self.abandoned(exchange, &configuration).await,
-            };
-            if let Continuation::Ended = continuation {
-                return;
-            }
-        }
-    }
-
-    async fn opened(
-        self: &Arc<Self>,
-        dispatcher: &Dispatcher,
-        opening: signal::Opening<capsule_nexus_wire::public_call::Input>,
-        configuration: Arc<ReadyCoreConfiguration>,
-    ) -> Continuation {
-        use signal::{Ending, ExchangeTracking, Exchanged};
-        let exchange = opening.exchange;
-        let admitted = self.ledger.lock().unwrap_or_else(|p| p.into_inner()).admit(exchange);
-        if let Err(fault) = admitted {
-            let ending = Ending::faulted(exchange, fault);
-            if ending.is_connection_wide() {
-                return self.faulted(ending, &configuration).await;
-            }
-            return match self.deliver(signal::Delivery::End(ending), &configuration).await {
-                Ok(()) => Continuation::Going,
-                Err(_) => Continuation::Ended,
-            };
-        }
-        let capsule_nexus_wire::public_call::Input::Call(call) = opening.query;
-        // The authority is the connection's: a configured peer's binding is
-        // checked again for every exchange, and a Caller that is not the
-        // connection's own peer ends the connection unanswered.
-        let peer_grant = self.authority.peer_grant();
+        authority: &PublicAuthority,
+        caller: &shared_translator::Caller,
+        query: Self::Query,
+    ) -> Option<(PublicGrant, signal_capsule_nexus::Input)> {
+        let capsule_nexus_wire::public_call::Input::Call(call) = query;
+        let peer_grant = authority.peer_grant();
         if let Some((peer_id, generation)) = &peer_grant {
-            if !dispatcher.peer_grant_is_current(&self.caller, peer_id, *generation) {
+            if !self.peer_grant_is_current(caller, peer_id, *generation) {
                 eprintln!("Capsule Nexus public request failed: configured peer binding changed before request dispatch");
-                return Continuation::Ended;
+                return None;
             }
         }
-        let principal = match principal_for(&self.authority, &self.caller, &call.caller) {
+        let principal = match principal_for(authority, caller, &call.caller) {
             Ok(principal) => principal,
             Err(error) => {
                 eprintln!("Capsule Nexus public request failed: {error}");
-                return Continuation::Ended;
+                return None;
             }
         };
-        tokio::spawn(Arc::clone(self).exchanged(
-            dispatcher.clone(),
-            exchange,
-            principal,
-            peer_grant,
-            call.public_input.0,
-            configuration,
-        ));
-        Continuation::Going
+        Some(((principal, peer_grant), call.public_input.0))
     }
 
-    /// Answers one exchange: its attempt runs on the blocking pool, and its
-    /// answer is given once or, for a Subscribe, as the stream's frames.
-    async fn exchanged(
-        self: Arc<Self>,
-        dispatcher: Dispatcher,
-        exchange: signal::ExchangeId,
-        principal: shared_translator::Principal,
-        peer_grant: Option<(shared_translator::PeerId, u64)>,
+    fn answer(
+        &self,
+        grant: PublicGrant,
         input: signal_capsule_nexus::Input,
         configuration: Arc<ReadyCoreConfiguration>,
-    ) {
-        let answering = dispatcher.clone();
-        let attempted = Arc::clone(&configuration);
-        let attempting = principal.clone();
-        let answer = tokio::task::spawn_blocking(move || answering.dispatch_as(attempting, input, attempted)).await;
-        match answer {
-            Ok(signal_capsule_nexus::Answer::Once(response)) => self.answer(exchange, response, &configuration).await,
-            Ok(signal_capsule_nexus::Answer::Subscribed(stream)) => {
-                self.subscribed(&dispatcher, exchange, principal, peer_grant, stream).await
-            }
-            Err(error) => {
-                eprintln!("Capsule Nexus public attempt failed: {error}");
-                self.end().await;
-            }
+    ) -> Reply<signal_capsule_nexus::Output, signal_capsule_nexus::Panes, signal_capsule_nexus::Known>
+    {
+        match self.dispatch_as(grant.0, input, configuration) {
+            signal_capsule_nexus::Answer::Once(response) => Reply::Once(response),
+            signal_capsule_nexus::Answer::Subscribed(stream) => Reply::Subscribed(stream),
         }
     }
 
-    /// Carries a subscription's stream on its exchange. A configured peer's
-    /// subscription is withdrawn with its binding.
-    async fn subscribed(
-        self: &Arc<Self>,
-        dispatcher: &Dispatcher,
-        exchange: signal::ExchangeId,
-        principal: shared_translator::Principal,
-        peer_grant: Option<(shared_translator::PeerId, u64)>,
-        stream: signal::Stream<signal_capsule_nexus::Panes, signal_capsule_nexus::Known>,
-    ) {
-        let closing = Arc::new(SubscriptionClosing::default());
-        if let shared_translator::Principal::Peer(peer_id) = &principal {
-            let registered = peer_grant.is_some_and(|(granted_id, generation)| {
-                granted_id == *peer_id
-                    && dispatcher.configuration.register_peer_subscriber(peer_id, generation, &closing)
+    /// A configured peer's subscription is withdrawn with its binding.
+    fn carried(&self, grant: &PublicGrant, closing: &Arc<SubscriptionClosing>) -> bool {
+        let (principal, peer_grant) = grant;
+        if let shared_translator::Principal::Peer(peer_id) = principal {
+            let registered = peer_grant.as_ref().is_some_and(|(granted_id, generation)| {
+                granted_id == peer_id
+                    && self.configuration.register_peer_subscriber(peer_id, *generation, closing)
             });
             if !registered {
                 eprintln!("Capsule Nexus subscription failed: configured peer binding changed before subscription registration");
-                self.end().await;
-                return;
+                return false;
             }
         }
-        self.carry(exchange, &closing);
-        self.follow(dispatcher, exchange, stream, closing).await;
+        true
     }
 
-    /// Sends each frame of the stream as one answer on its exchange, until
-    /// the stream finishes or the subscription closes.
-    async fn follow(
-        &self,
-        dispatcher: &Dispatcher,
-        exchange: signal::ExchangeId,
-        mut stream: signal::Stream<signal_capsule_nexus::Panes, signal_capsule_nexus::Known>,
-        closing: Arc<SubscriptionClosing>,
-    ) {
-        use futures_util::StreamExt;
-        let concluded = loop {
-            let frame = tokio::select! {
-                biased;
-                closed = closing.closed() => break closed,
-                frame = stream.next() => frame,
-            };
-            let Some(frame) = frame else {
-                break Closing::Finished;
-            };
-            let Some(configuration) = dispatcher.configuration.snapshot() else {
-                break Closing::Withdrawn;
-            };
-            let response = signal_capsule_nexus::Output::Subscribed(frame);
-            if self.stream(exchange, response, &configuration).await.is_err() {
-                break Closing::Withdrawn;
-            }
-        };
-        drop(stream);
-        self.conclude(exchange, concluded, dispatcher).await;
-    }
-
-    async fn abandoned(&self, exchange: signal::ExchangeId, configuration: &ReadyCoreConfiguration) -> Continuation {
-        use signal::{Ending, ExchangeTracking, Exchanged};
-        let released = self.ledger.lock().unwrap_or_else(|p| p.into_inner()).release(exchange);
-        match released {
-            Ok(_) => {
-                if let Some(closing) = self.withdrawn(exchange) {
-                    closing.close(Closing::Abandoned);
-                }
-                Continuation::Going
-            }
-            Err(fault) => {
-                let ending = Ending::faulted(exchange, fault);
-                if ending.is_connection_wide() {
-                    return self.faulted(ending, configuration).await;
-                }
-                match self.deliver(signal::Delivery::End(ending), configuration).await {
-                    Ok(()) => Continuation::Going,
-                    Err(_) => Continuation::Ended,
-                }
-            }
-        }
-    }
-
-    /// Answers a one-answer exchange, which ends with it. An exchange the peer
-    /// abandoned meanwhile is not answered.
-    async fn answer(
-        &self,
-        exchange: signal::ExchangeId,
-        response: signal_capsule_nexus::Output,
-        configuration: &ReadyCoreConfiguration,
-    ) {
-        use signal::ExchangeTracking;
-        let released = self.ledger.lock().unwrap_or_else(|p| p.into_inner()).release(exchange);
-        if released.is_ok() && self.deliver(Self::answered(exchange, response), configuration).await.is_err() {
-            self.end().await;
-        }
-    }
-
-    /// Sends one more answer on a subscription's exchange.
-    async fn stream(
-        &self,
-        exchange: signal::ExchangeId,
-        response: signal_capsule_nexus::Output,
-        configuration: &ReadyCoreConfiguration,
-    ) -> Result<(), capsule_nexus_wire::exchange::ExchangeError> {
-        use signal::ExchangeTracking;
-        let bears = self.ledger.lock().unwrap_or_else(|p| p.into_inner()).bears(exchange);
-        if !bears {
-            return Ok(());
-        }
-        self.deliver(Self::answered(exchange, response), configuration).await
-    }
-
-    /// Records a subscription on its exchange. A connection that has already
-    /// ended abandons it at once.
-    fn carry(&self, exchange: signal::ExchangeId, closing: &Arc<SubscriptionClosing>) {
-        match self.subscriptions.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
-            Some(subscriptions) => subscriptions.push(CarriedSubscription {
-                exchange,
-                closing: Arc::clone(closing),
-            }),
-            None => closing.close(Closing::Abandoned),
-        }
-    }
-
-    fn withdrawn(&self, exchange: signal::ExchangeId) -> Option<Arc<SubscriptionClosing>> {
-        let mut subscriptions = self.subscriptions.lock().unwrap_or_else(|p| p.into_inner());
-        let subscriptions = subscriptions.as_mut()?;
-        let at = subscriptions.iter().position(|carried| carried.exchange == exchange)?;
-        Some(subscriptions.remove(at).closing)
-    }
-
-    /// Concludes a subscription as its closing says: a stream that finished
-    /// ends its exchange Completed, and a subscriber whose authority is gone
-    /// has its connection closed.
-    async fn conclude(&self, exchange: signal::ExchangeId, closing: Closing, dispatcher: &Dispatcher) {
-        use signal::ExchangeTracking;
-        self.withdrawn(exchange);
-        let released = self.ledger.lock().unwrap_or_else(|p| p.into_inner()).release(exchange);
-        match closing {
-            Closing::Abandoned => {}
-            Closing::Finished => {
-                let Some(configuration) = dispatcher.configuration.snapshot() else {
-                    return self.end().await;
-                };
-                let ending = signal::Delivery::End(signal::Ending::completed(exchange));
-                if released.is_ok() && self.deliver(ending, &configuration).await.is_err() {
-                    self.end().await;
-                }
-            }
-            Closing::Withdrawn => self.end().await,
-        }
-    }
-
-    fn answered(
-        exchange: signal::ExchangeId,
-        response: signal_capsule_nexus::Output,
-    ) -> signal::Delivery<capsule_nexus_wire::public_call::Output> {
-        signal::Delivery::Answer(signal::Answer {
-            exchange,
-            response: capsule_nexus_wire::public_call::Output::Answered(
-                capsule_nexus_wire::public_payload::Output(response),
-            ),
-        })
-    }
-
-    /// Ends the connection with a fault it names.
-    async fn faulted(&self, ending: signal::Ending, configuration: &ReadyCoreConfiguration) -> Continuation {
-        let _ = self.deliver(signal::Delivery::End(ending), configuration).await;
-        Continuation::Ended
-    }
-
-    async fn deliver(
-        &self,
-        delivery: signal::Delivery<capsule_nexus_wire::public_call::Output>,
-        configuration: &ReadyCoreConfiguration,
-    ) -> Result<(), capsule_nexus_wire::exchange::ExchangeError> {
-        let mut writing = self.writing.lock().await;
-        capsule_nexus_wire::exchange::write_value_async(
-            &mut *writing,
-            &delivery,
-            configuration.transport_timeout,
-            signal::FrameCapacity::from(configuration.frame_capacity_bytes),
+    fn answered(output: signal_capsule_nexus::Output) -> capsule_nexus_wire::public_call::Output {
+        capsule_nexus_wire::public_call::Output::Answered(
+            capsule_nexus_wire::public_payload::Output(output),
         )
-        .await
     }
 
-    /// Ends the connection: every subscription on it is abandoned, its
-    /// reading stops and the peer reads the end of the stream.
-    async fn end(&self) {
-        use tokio::io::AsyncWriteExt;
-        let carried = self.subscriptions.lock().unwrap_or_else(|p| p.into_inner()).take();
-        for carried in carried.into_iter().flatten() {
-            carried.closing.close(Closing::Abandoned);
-        }
-        self.ended.send_replace(true);
-        let _ = self.writing.lock().await.shutdown().await;
+    fn subscribed(
+        frame: signal::Frame<signal_capsule_nexus::Panes, signal_capsule_nexus::Known>,
+    ) -> signal_capsule_nexus::Output {
+        signal_capsule_nexus::Output::Subscribed(frame)
+    }
+}
+
+impl TransportBounded for ReadyCoreConfiguration {
+    fn transport_timeout(&self) -> Duration {
+        self.transport_timeout
+    }
+
+    fn frame_capacity(&self) -> signal::FrameCapacity {
+        signal::FrameCapacity::from(self.frame_capacity_bytes)
     }
 }
 
 pub fn same_login(caller: &shared_translator::Caller) -> bool {
     caller.user_id.0 == i64::from(nix::unistd::getuid().as_raw())
-}
-
-/// Why a subscription stops being fed, which decides how its exchange ends.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Closing {
-    /// The stream finished: its Publisher is gone, and the exchange ends
-    /// Completed.
-    Finished,
-    /// The authority the subscription was opened under is gone: its peer was
-    /// rebound or removed, or its connection's writing failed. The
-    /// connection closes.
-    Withdrawn,
-    /// The querying side abandoned the exchange or closed the connection.
-    Abandoned,
-}
-
-/// The closing of one subscription, set once, by whoever ends it first, and
-/// awaited by the task that follows its stream.
-#[derive(Default)]
-struct SubscriptionClosing {
-    closing: tokio::sync::watch::Sender<Option<Closing>>,
-}
-
-impl SubscriptionClosing {
-    /// Closes the subscription for `closing`, unless it is already closed for
-    /// another reason, which stands.
-    fn close(&self, closing: Closing) {
-        self.closing.send_if_modified(|current| {
-            if current.is_some() {
-                return false;
-            }
-            *current = Some(closing);
-            true
-        });
-    }
-
-    #[cfg(test)]
-    fn is_open(&self) -> bool {
-        self.closing.borrow().is_none()
-    }
-
-    /// Waits until the subscription is closed, and says why.
-    async fn closed(&self) -> Closing {
-        let mut watching = self.closing.subscribe();
-        loop {
-            let current = *watching.borrow_and_update();
-            if let Some(closing) = current {
-                return closing;
-            }
-            if watching.changed().await.is_err() {
-                return Closing::Abandoned;
-            }
-        }
-    }
 }
 
 /// The public surface of the Nexus: each input attempted on the state its
@@ -817,8 +284,10 @@ pub enum EmissionResult {
     Unavailable(signal_capsule_nexus::TransportRefusal),
 }
 
+/// The emitter that sends each herdr call to the translator on the emission
+/// lane.
 struct SocketEmitter {
-    translator_socket: std::path::PathBuf,
+    lane: EmissionLane,
 }
 
 /// The Kameo actor that owns the Capsule's state: Memory and each session's
@@ -1225,7 +694,7 @@ impl Dispatcher {
         Self {
             capsule,
             emitter: Arc::new(SocketEmitter {
-                translator_socket: paths.translator.clone(),
+                lane: EmissionLane::from(paths.translator.clone()),
             }),
             configuration,
             runtime,
@@ -1573,62 +1042,20 @@ impl ExternalEmitter for SocketEmitter {
         configuration: &ReadyCoreConfiguration,
         herdr: emission_capsule_nexus::Herdr,
     ) -> EmissionResult {
-        use capsule_nexus_wire::transport_types::{Kind, Lane};
-        use signal::{ByteViewable, Restorable, Signal, Signalizable};
-        let stream = match std::os::unix::net::UnixStream::connect(&self.translator_socket) {
-            Ok(stream) => stream,
-            Err(error) => return unavailable_transport(&self.translator_socket, error.to_string()),
-        };
-        let response_stream = match stream.try_clone() {
-            Ok(stream) => stream,
-            Err(error) => return unavailable_transport(&self.translator_socket, error.to_string()),
-        };
-        let mut output = match DeadlineStream::new(stream, configuration.transport_timeout) {
-            Ok(stream) => stream,
-            Err(error) => return unavailable_transport(&self.translator_socket, error.to_string()),
-        };
-        let request = emission_capsule_nexus::Input::Emit(herdr);
-        let request = match request.signalize() {
-            Ok(request) => request,
-            Err(error) => {
-                return unavailable_transport(&self.translator_socket, format!("{error:?}"))
-            }
-        };
-        if let Err(failure) = capsule_nexus_wire::frame::write_frame_witness(
-            &mut output,
-            &capsule_nexus_wire::frame::Frame {
-                lane: Lane::EmissionSignal,
-                kind: Kind::Request,
-                payload: request.bytes().to_vec(),
-            },
+        let emitted = self.lane.emit::<_, emission_capsule_nexus::Output>(
+            &emission_capsule_nexus::Input::Emit(herdr),
+            configuration.transport_timeout,
             configuration.frame_capacity_bytes,
-        ) {
-            return unavailable_transport(
-                &self.translator_socket,
-                format!(
-                    "incomplete request submission after {} bytes: {:?}",
-                    failure.written, failure.error
-                ),
-            );
+        );
+        match emitted {
+            Ok(emission_capsule_nexus::Output::Emitted(outcome)) => EmissionResult::External(outcome),
+            Err(EmissionFailure::Unsubmitted(message)) => {
+                unavailable_transport(self.lane.translator_socket(), message)
+            }
+            Err(EmissionFailure::Unanswered(_)) => {
+                EmissionResult::External(emission_capsule_nexus::ExternalOutcome::Uncertain)
+            }
         }
-        drop(output);
-        let result = (|| -> Result<_, Box<dyn std::error::Error>> {
-            let body = capsule_nexus_wire::frame::read_frame_after_idle(
-                response_stream,
-                configuration.transport_timeout,
-                configuration.frame_capacity_bytes,
-            )?
-            .ok_or("translator closed without an emission answer")?;
-            if body.lane != Lane::EmissionSignal || body.kind != Kind::Answered {
-                return Err("translator returned a non-answer emission frame".into());
-            }
-            let response =
-                Signal::<emission_capsule_nexus::Output>::from(body.payload).restore()?;
-            match response {
-                emission_capsule_nexus::Output::Emitted(outcome) => Ok(outcome),
-            }
-        })();
-        EmissionResult::External(result.unwrap_or(emission_capsule_nexus::ExternalOutcome::Uncertain))
     }
 }
 
@@ -1931,11 +1358,6 @@ struct BoundPeer {
 }
 
 impl BoundPeer {
-    fn capture(identity: shared_translator::PeerIdentity) -> std::io::Result<Self> {
-        shared_translator::unix::LivePeer::capture(identity)
-            .map(|live| Self { live, generation: 0 })
-    }
-
     fn matches(&self, caller: &shared_translator::Caller) -> bool {
         self.live.matches_caller(caller)
     }
@@ -2407,7 +1829,7 @@ mod tests {
             session: signal_capsule_nexus::Session,
             configuration: Arc<ReadyCoreConfiguration>,
         ) -> std::os::unix::net::UnixStream {
-            use capsule_nexus_wire::exchange::{Patience, QueryingConnection};
+            use nexus_querying::{Patience, Querying, QueryingConnection};
             use capsule_nexus_wire::public_call::{Call_Data, Input, Output};
             let (server, client) = std::os::unix::net::UnixStream::pair().expect("pair");
             let caller = capsule_nexus_wire::frame::peer_caller(&client).expect("caller");
@@ -2450,12 +1872,11 @@ mod tests {
     }
 
     fn test_paths() -> SocketPaths {
-        SocketPaths {
-            public: "/tmp/herdr-test-public".into(),
-            meta: "/tmp/herdr-test-meta".into(),
-            translator: "/tmp/herdr-test-translator".into(),
-            meta_translator: "/tmp/herdr-test-meta-translator".into(),
-        }
+        SocketPaths::from(&shared_translator::placement::Place {
+            place_name: shared_translator::placement::PlaceName("herdr-test".into()),
+            runtime: shared_translator::placement::Runtime("/tmp/herdr-test".into()),
+            state: shared_translator::placement::State("/tmp/herdr-test".into()),
+        })
     }
 
     fn test_configuration() -> Arc<ReadyCoreConfiguration> {
@@ -2698,7 +2119,7 @@ mod tests {
     #[test]
     fn socket_emitter_waits_idle_then_bounds_progress_and_capacity() {
         use emission_capsule_nexus::{ExternalOutcome, Herdr, Verb};
-        use capsule_nexus_wire::transport_types::{Kind, Lane};
+        use nexus_exchange::lane::{Kind, Lane, LaneReading, LaneWriting};
         use signal::{ByteViewable, Signalizable};
         use std::os::unix::net::UnixListener;
 
@@ -2717,7 +2138,7 @@ mod tests {
         let timeout_listener = UnixListener::bind(&timeout_socket).expect("timeout listener");
         let timeout_peer = std::thread::spawn(move || {
             let (mut stream, _) = timeout_listener.accept().expect("timeout connection");
-            let request = capsule_nexus_wire::frame::read_frame(
+            let request = LaneReading::read_lane_frame(
                 &mut stream,
                 signal::MAXIMUM_SIGNAL_BYTES,
             )
@@ -2730,9 +2151,9 @@ mod tests {
             ))
             .signalize()
             .expect("signalize answer");
-            capsule_nexus_wire::frame::write_frame(
+            LaneWriting::write_lane_frame(
                 &mut stream,
-                &capsule_nexus_wire::frame::Frame {
+                &nexus_exchange::lane::Frame {
                     lane: Lane::EmissionSignal,
                     kind: Kind::Answered,
                     payload: answer.bytes().to_vec(),
@@ -2742,7 +2163,7 @@ mod tests {
             .expect("emission answer");
         });
         let emitter = SocketEmitter {
-            translator_socket: timeout_socket,
+            lane: EmissionLane::from(timeout_socket),
         };
         let mut configuration = (*test_configuration()).clone();
         configuration.transport_timeout = Duration::from_millis(10);
@@ -2762,7 +2183,7 @@ mod tests {
             let _ = capacity_listener.accept().expect("capacity connection");
         });
         let emitter = SocketEmitter {
-            translator_socket: capacity_socket,
+            lane: EmissionLane::from(capacity_socket),
         };
         configuration.frame_capacity_bytes = 1;
         assert!(matches!(
@@ -3679,7 +3100,7 @@ mod tests {
         configure(binding);
         let capacity = signal::FrameCapacity::from(4096);
         assert!(
-            capsule_nexus_wire::exchange::read_frame_or_end(&mut client, capacity)
+            nexus_exchange::EndingFrameReading::read_frame_or_end(&mut client, capacity)
                 .expect("the end of the connection")
                 .is_none(),
             "a withdrawn subscription closes its connection"
@@ -3700,7 +3121,7 @@ mod tests {
 
     #[test]
     fn a_public_connection_greets_once_then_answers_each_exchange_on_its_identifier() {
-        use capsule_nexus_wire::exchange::{Patience, QueryingConnection};
+        use nexus_querying::{Patience, Querying, QueryingConnection};
         use capsule_nexus_wire::public_call::{Input, Output};
         use signal::Delivery;
         let (dispatcher, _emitter, pane) = started_dispatcher(Vec::new());
@@ -3754,7 +3175,7 @@ mod tests {
             test_configuration(),
         ));
         let capacity = signal::FrameCapacity::from(4096);
-        capsule_nexus_wire::exchange::write_value(
+        nexus_exchange::ValueWriting::write_value(
             &client,
             &Dispatch::Open(Opening { exchange: signal::FIRST_EXCHANGE, query: public_query("any", &caller) }),
             Duration::from_millis(500),
@@ -3763,15 +3184,15 @@ mod tests {
         .expect("open");
         let mut reading = client.try_clone().expect("reading");
         reading.set_read_timeout(Some(Duration::from_millis(500))).expect("timeout");
-        let body = capsule_nexus_wire::exchange::read_frame_or_end(&mut reading, capacity)
+        let body = nexus_exchange::EndingFrameReading::read_frame_or_end(&mut reading, capacity)
             .expect("frame")
             .expect("an ending");
         assert_eq!(
-            capsule_nexus_wire::exchange::restored::<Delivery<capsule_nexus_wire::public_call::Output>>(body)
+            nexus_exchange::ValueRestoring::restored::<Delivery<capsule_nexus_wire::public_call::Output>>(body)
                 .expect("delivery"),
             Delivery::End(Ending::connection_faulted(ExchangeFault::GreetingExpected))
         );
-        assert!(capsule_nexus_wire::exchange::read_frame_or_end(&mut reading, capacity)
+        assert!(nexus_exchange::EndingFrameReading::read_frame_or_end(&mut reading, capacity)
             .expect("the end of the connection")
             .is_none());
     }
@@ -3779,15 +3200,16 @@ mod tests {
 }
     #[test]
     fn core_accepts_only_the_paired_translator_process() {
+        use nexus_serving::{PairedPeer, PeerMatching};
         use shared_translator::{PeerIdentity, ProcessId, UserId};
         let (client, _server) = std::os::unix::net::UnixStream::pair().expect("socket pair");
         let actual = capsule_nexus_wire::frame::peer_caller(&client).expect("peer credentials");
-        let paired = BoundPeer::capture(PeerIdentity {
+        let paired = PairedPeer::capture(PeerIdentity {
             user_id: actual.user_id,
             process_id: actual.process_id,
         }).expect("capture current process");
-        assert!(require_peer(&client, &paired).is_ok());
-        let forged = BoundPeer::capture(PeerIdentity {
+        assert!(paired.require_peer(&client).is_ok());
+        let forged = PairedPeer::capture(PeerIdentity {
             user_id: UserId(actual.user_id.0),
             process_id: ProcessId(actual.process_id.0),
         }).expect("capture current process");

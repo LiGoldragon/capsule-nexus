@@ -5,11 +5,11 @@ pub mod server;
 pub mod generated {
     pub mod argument;
 }
-pub use capsule_nexus_wire::frame as transport;
+pub use nexus_exchange::lane as transport;
 pub use capsule_nexus_wire::transport_types;
 
-use capsule_nexus_wire::frame::{Frame, TransportError};
-use capsule_nexus_wire::transport_types::{Kind, Lane};
+use nexus_exchange::lane::{Frame, LaneReading, LaneWriting, TransportError};
+use nexus_exchange::lane::{Kind, Lane};
 
 /// One text-lane connection to the translator. The CLI carries text only;
 /// typed signal begins behind the translator.
@@ -50,7 +50,7 @@ impl TextClient {
         }
         let mut stream =
             std::os::unix::net::UnixStream::connect(&self.socket).map_err(ClientError::Io)?;
-        transport::write_frame(
+        LaneWriting::write_lane_frame(
             &mut stream,
             &Frame {
                 lane: lane.clone(),
@@ -62,7 +62,7 @@ impl TextClient {
         .map_err(ClientError::Transport)?;
         let mut received = false;
         loop {
-            let response = match transport::read_frame(&mut stream, self.admission_limit) {
+            let response = match LaneReading::read_lane_frame(&mut stream, self.admission_limit) {
                 Ok(response) => response,
                 Err(TransportError::Io(error))
                     if received && error.kind() == std::io::ErrorKind::UnexpectedEof =>

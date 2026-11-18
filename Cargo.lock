@@ -67,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "capsule-nexus-daemon"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "capsule-nexus-core",
  "capsule-nexus-wire",
@@ -77,6 +77,9 @@ dependencies = [
  "kameo",
  "meta-signal-capsule-nexus",
  "nexus",
+ "nexus-exchange",
+ "nexus-querying",
+ "nexus-serving",
  "nix",
  "rustix",
  "signal",
@@ -87,7 +90,7 @@ dependencies = [
 
 [[package]]
 name = "capsule-nexus-translator"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "capsule-nexus-wire",
  "core-meta-capsule-nexus",
@@ -95,6 +98,8 @@ dependencies = [
  "emission-capsule-nexus",
  "libc",
  "meta-signal-capsule-nexus",
+ "nexus-exchange",
+ "nexus-querying",
  "nix",
  "protos",
  "rkyv",
@@ -108,14 +113,13 @@ dependencies = [
 
 [[package]]
 name = "capsule-nexus-wire"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "core-meta-capsule-nexus",
  "datom-codec",
- "libc",
  "meta-signal-capsule-nexus",
  "mio",
- "nix",
+ "nexus-exchange",
  "protos",
  "rkyv",
  "signal",
@@ -477,6 +481,43 @@ dependencies = [
  "signal",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "nexus-exchange"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/nexus?rev=8976179c940b4a822990f519515084cb62d3f908#8976179c940b4a822990f519515084cb62d3f908"
+dependencies = [
+ "datom-codec",
+ "protos",
+ "rkyv",
+ "signal",
+ "translator",
+]
+
+[[package]]
+name = "nexus-querying"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/nexus?rev=8976179c940b4a822990f519515084cb62d3f908#8976179c940b4a822990f519515084cb62d3f908"
+dependencies = [
+ "nexus-exchange",
+ "rkyv",
+ "signal",
+]
+
+[[package]]
+name = "nexus-serving"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/nexus?rev=8976179c940b4a822990f519515084cb62d3f908#8976179c940b4a822990f519515084cb62d3f908"
+dependencies = [
+ "futures-channel",
+ "futures-util",
+ "mio",
+ "nexus-exchange",
+ "rkyv",
+ "signal",
+ "tokio",
+ "translator",
 ]
 
 [[package]]

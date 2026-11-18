@@ -6,8 +6,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use capsule_nexus_wire::transport_types::{
-    Admission, CoreBootstrap, FrameCapacityBytes, FrameDeadlineMilliseconds, RetryDelayMilliseconds,
+use capsule_nexus_wire::transport_types::CoreBootstrap;
+use nexus_exchange::{
+    Admission, FrameCapacityBytes, FrameDeadlineMilliseconds, RetryDelayMilliseconds,
 };
 use shared_translator::{
     FrameCapacity, FrameWriting, Place, PlaceName, Runtime, Signalizable, State,

@@ -1,5 +1,39 @@
 # Upgrades
 
+## 0.7.0 — the serving is every Nexus's
+
+wire, daemon and the translator move to 0.7.0; core, core-meta and emission
+stay.
+
+**Pins.** `nexus-exchange`, `nexus-querying` and `nexus-serving` 0.1.0, one
+revision of the nexus repository; build-base registers them. ethos-zero
+30.0.1 (`2999292`) generates and checks the contracts; every committed
+generation is unchanged by it. nexus 0.9.0, signal 11.2.0, translator 0.5.2
+and both contracts stay.
+
+**What moved.** The exchange helpers, `QueryingConnection`, the lane framing,
+`DeadlineStream`, the accept retry and `ValidAdmission` leave the wire crate
+for `nexus-exchange` and `nexus-querying`; `Lane`, `Kind`, `SocketNames` and
+`Admission` with its three integers leave `transport.ethos` for
+`nexus-exchange`'s Ethos, and `transport.ethos` keeps the two bootstrap
+frames. `OwnedListener`, `SocketPaths`, the meta-then-public bootstrap,
+paired-peer admission, the meta exchange loop, `PublicConnection`, the
+subscription closing and the emission lane leave the daemon for
+`nexus-serving`. The wire keeps the call contracts, the bootstrap frames and
+`CapsuleNexus`, whose name gives the four sockets; the daemon keeps its
+configuration, its actor and its bodies: `MetaAnswering` for `Bootstrap`,
+`PublicServing` for `Dispatcher`, `PeerAdmitting` for `ConfigurationStore`,
+`TransportBounded` for `ReadyCoreConfiguration`. `SocketPaths`,
+`AcceptedPublic` and `PublicConnection` are the shared types for the Capsule.
+
+**Behaviour.** Unchanged: the sockets, the exchange layer's frames, the lane
+header, the bootstrap frames' archives and every Datom text are as they
+were. Only diagnostics on stderr change, where a transport or exchange error
+displays as `Nexus transport error` or `Nexus exchange error`; an exchange
+error the translator answers with still reads `Capsule Nexus exchange error`.
+
+To deploy: rebuild the daemon and the translator together.
+
 ## 0.6.0 — each pane moved is published whole; the subscriber capacity resizes
 
 core, daemon, wire and the translator move to 0.6.0; core-meta and emission

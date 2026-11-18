@@ -1,5 +1,6 @@
 use crate::runner::{self, Captured};
-use capsule_nexus_wire::exchange::{Patience, QueryingConnection};
+use crate::transport::Textual;
+use nexus_querying::{Patience, Querying, QueryingConnection};
 use crate::generated::argument::{Arguable, ListArgument, PaneCloseArgument};
 use emission_capsule_nexus::{
     AgentListing, AgentPrompt_Data, AgentStart_Data, ExternalOutcome, Herdr, SendKeys_Data,
@@ -93,7 +94,7 @@ fn serve_listener(
     nexus_peer: std::sync::Arc<NexusPeer>,
 ) -> Result<(), ServerError> {
     loop {
-        let (mut stream, _) = capsule_nexus_wire::accept_with_retry(
+        let (mut stream, _) = nexus_exchange::RetryingAccept::accept_with_retry(
             &bound.listener,
             bootstrap.admission.retry_delay,
         )
@@ -144,15 +145,15 @@ fn serve_one_paired(
     nexus_peer: Option<&NexusPeer>,
 ) -> Result<(), ServerError> {
     use crate::transport::{self, Frame};
-    use crate::transport_types::{Kind, Lane};
-    let caller = crate::transport::peer_caller(stream).map_err(ServerError::Transport)?;
-    let mut io = capsule_nexus_wire::deadline::DeadlineStream::new(
+    use crate::transport::{Kind, Lane};
+    let caller = crate::transport::PeerCalling::peer_caller(stream).map_err(ServerError::Transport)?;
+    let mut io = nexus_exchange::DeadlineStream::new(
         stream.try_clone().map_err(ServerError::Io)?,
         bootstrap.admission.deadline,
     )
     .map_err(ServerError::Io)?;
     let request =
-        transport::read_frame(&mut io, bootstrap.admission.frame_capacity).map_err(ServerError::Transport)?;
+        transport::LaneReading::read_lane_frame(&mut io, bootstrap.admission.frame_capacity).map_err(ServerError::Transport)?;
     if request.kind != Kind::Request {
         return Err(ServerError::Transport(
             crate::transport::TransportError::InvalidLength,
@@ -208,7 +209,7 @@ fn serve_one_paired(
             Ok(query) => query,
             Err(error) => {
                 drop(io);
-                let mut output = capsule_nexus_wire::deadline::DeadlineStream::new(
+                let mut output = nexus_exchange::DeadlineStream::new(
                     stream.try_clone().map_err(ServerError::Io)?, progress_timeout,
                 ).map_err(ServerError::Io)?;
                 return write_failed_frame(&mut output, lane, &error.to_string(), bootstrap.admission.frame_capacity);
@@ -244,10 +245,10 @@ fn serve_one_paired(
             },
         };
         drop(io);
-        let mut output = capsule_nexus_wire::deadline::DeadlineStream::new(
+        let mut output = nexus_exchange::DeadlineStream::new(
             stream.try_clone().map_err(ServerError::Io)?, progress_timeout,
         ).map_err(ServerError::Io)?;
-        return transport::write_frame(&mut output, &response, bootstrap.admission.frame_capacity)
+        return transport::LaneWriting::write_lane_frame(&mut output, &response, bootstrap.admission.frame_capacity)
             .map_err(ServerError::Transport);
     }
     let response = (|| -> Result<Frame, ServerError> {
@@ -286,7 +287,7 @@ fn serve_one_paired(
                     payload: response.into_bytes(),
                 }
             }
-            Lane::PublicText => return Err(ServerError::Transport(capsule_nexus_wire::frame::TransportError::WrongLane)),
+            Lane::PublicText => return Err(ServerError::Transport(crate::transport::TransportError::WrongLane)),
         })
     })();
     let response = match response {
@@ -298,24 +299,24 @@ fn serve_one_paired(
         },
     };
     drop(io);
-    let mut output = capsule_nexus_wire::deadline::DeadlineStream::new(
+    let mut output = nexus_exchange::DeadlineStream::new(
         stream.try_clone().map_err(ServerError::Io)?, bootstrap.admission.deadline,
     ).map_err(ServerError::Io)?;
-    transport::write_frame(&mut output, &response, bootstrap.admission.frame_capacity)
+    transport::LaneWriting::write_lane_frame(&mut output, &response, bootstrap.admission.frame_capacity)
         .map_err(ServerError::Transport)
 }
 
 fn write_failed_frame(
     stream: &mut impl std::io::Write,
-    lane: crate::transport_types::Lane,
+    lane: crate::transport::Lane,
     message: &str,
     admission_limit: usize,
 ) -> Result<(), ServerError> {
-    crate::transport::write_frame(
+    crate::transport::LaneWriting::write_lane_frame(
         stream,
         &crate::transport::Frame {
             lane,
-            kind: crate::transport_types::Kind::Failed,
+            kind: crate::transport::Kind::Failed,
             payload: message.as_bytes().to_vec(),
         },
         admission_limit,
@@ -665,16 +666,16 @@ fn forward_public_stream(
             }
         };
         let frame = crate::transport::Frame {
-            lane: crate::transport_types::Lane::PublicText,
-            kind: crate::transport_types::Kind::Answered,
+            lane: crate::transport::Lane::PublicText,
+            kind: crate::transport::Kind::Answered,
             payload: shared_translator::encode(&response).into_bytes(),
         };
-        let mut client_write = capsule_nexus_wire::deadline::DeadlineStream::new(
+        let mut client_write = nexus_exchange::DeadlineStream::new(
             client.try_clone().map_err(ServerError::Io)?,
             progress_timeout,
         )
         .map_err(ServerError::Io)?;
-        crate::transport::write_frame(&mut client_write, &frame, admission_limit)
+        crate::transport::LaneWriting::write_lane_frame(&mut client_write, &frame, admission_limit)
             .map_err(ServerError::Transport)?;
     }
 }
@@ -1379,13 +1380,13 @@ impl std::fmt::Display for ServerError {
 
 impl std::error::Error for ServerError {}
 
-impl From<capsule_nexus_wire::exchange::ExchangeError> for ServerError {
-    fn from(error: capsule_nexus_wire::exchange::ExchangeError) -> Self {
-        use capsule_nexus_wire::exchange::ExchangeError;
+impl From<nexus_exchange::ExchangeError> for ServerError {
+    fn from(error: nexus_exchange::ExchangeError) -> Self {
+        use nexus_exchange::ExchangeError;
         match error {
             ExchangeError::Frame(shared_translator::FrameError::Io(error)) => Self::Io(error),
             ExchangeError::Frame(error) => Self::Frame(error),
-            other => Self::Signal(other.to_string()),
+            other => Self::Signal(format!("Capsule Nexus exchange error: {other:?}")),
         }
     }
 }
@@ -1400,10 +1401,10 @@ mod tests {
         configuration: &TranslatorConfiguration,
         text: &str,
     ) -> crate::transport::Frame {
-        use crate::transport::{read_frame, write_frame, Frame};
-        use crate::transport_types::{Kind, Lane};
+        use crate::transport::{Frame, LaneReading, LaneWriting};
+        use crate::transport::{Kind, Lane};
         let (mut client, mut server) = UnixStream::pair().expect("socket pair");
-        write_frame(
+        LaneWriting::write_lane_frame(
             &mut client,
             &Frame {
                 lane: Lane::MetaText,
@@ -1431,15 +1432,15 @@ mod tests {
             (MAXIMUM_SIGNAL_BYTES, signal::MAXIMUM_SIGNAL_DEPTH),
         )
         .expect("isolated request served");
-        read_frame(&mut client, MAXIMUM_SIGNAL_BYTES).expect("response frame")
+        LaneReading::read_lane_frame(&mut client, MAXIMUM_SIGNAL_BYTES).expect("response frame")
     }
 
     #[test]
     fn meta_lane_is_rejected_on_the_public_endpoint() {
-        use crate::transport::{read_frame, write_frame, Frame};
-        use crate::transport_types::{Kind, Lane};
+        use crate::transport::{Frame, LaneReading, LaneWriting};
+        use crate::transport::{Kind, Lane};
         let (mut client, mut server) = UnixStream::pair().expect("socket pair");
-        write_frame(
+        LaneWriting::write_lane_frame(
             &mut client,
             &Frame {
                 lane: Lane::MetaText,
@@ -1468,7 +1469,7 @@ mod tests {
         )
         .expect("wrong lane answered");
         assert_eq!(
-            read_frame(&mut client, MAXIMUM_SIGNAL_BYTES)
+            LaneReading::read_lane_frame(&mut client, MAXIMUM_SIGNAL_BYTES)
                 .expect("response")
                 .kind,
             Kind::Failed
@@ -1477,11 +1478,11 @@ mod tests {
 
     #[test]
     fn same_login_impostor_cannot_submit_an_emission() {
-        use crate::transport::{read_frame, write_frame, Frame};
-        use crate::transport_types::{Kind, Lane};
+        use crate::transport::{Frame, LaneReading, LaneWriting};
+        use crate::transport::{Kind, Lane};
         use shared_translator::{PeerIdentity, ProcessId, UserId};
         let (mut client, mut server) = UnixStream::pair().expect("socket pair");
-        write_frame(
+        LaneWriting::write_lane_frame(
             &mut client,
             &Frame {
                 lane: Lane::EmissionSignal,
@@ -1518,7 +1519,7 @@ mod tests {
         )
         .expect("impostor receives typed failure");
         assert_eq!(
-            read_frame(&mut client, MAXIMUM_SIGNAL_BYTES)
+            LaneReading::read_lane_frame(&mut client, MAXIMUM_SIGNAL_BYTES)
                 .expect("response")
                 .kind,
             Kind::Failed
@@ -1527,7 +1528,7 @@ mod tests {
 
     #[test]
     fn malformed_meta_request_is_failed_and_next_valid_set_is_answered() {
-        use crate::transport_types::Kind;
+        use crate::transport::Kind;
         let configuration = TranslatorConfiguration::default();
         let malformed = meta_request(&configuration, "this is not datom");
         assert_eq!(malformed.kind, Kind::Failed);
@@ -1784,7 +1785,7 @@ mod tests {
         let began = Instant::now();
         let answer = crate::TextClient::new(&front_path, MAXIMUM_SIGNAL_BYTES)
             .request(
-                crate::transport_types::Lane::PublicText,
+                crate::transport::Lane::PublicText,
                 "Start.{ { s p } { a Codex Configured [] } label }",
             )
             .expect("Start answer");

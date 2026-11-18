@@ -1,4 +1,7 @@
 use capsule_nexus_translator::{maximum_text_budget, transport_types::*};
+use nexus_exchange::{
+    Admission, FrameCapacityBytes, FrameDeadlineMilliseconds, RetryDelayMilliseconds,
+};
 use meta_signal_capsule_nexus::{BudgetValue, DepthLimit, NodeLimit};
 use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::waitpid;

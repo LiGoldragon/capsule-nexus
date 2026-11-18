@@ -1,3 +1,4 @@
+use nexus_serving::ConnectionServing;
 use signal::{FrameCapacity, FrameReading, Restorable, Signal};
 use std::sync::Arc;
 

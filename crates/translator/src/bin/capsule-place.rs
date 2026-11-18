@@ -1,7 +1,7 @@
 use capsule_nexus_translator::maximum_text_budget;
-use capsule_nexus_translator::transport_types::{
-    Admission, CoreBootstrap, FrameCapacityBytes, FrameDeadlineMilliseconds,
-    RetryDelayMilliseconds, TranslatorBootstrap,
+use capsule_nexus_translator::transport_types::{CoreBootstrap, TranslatorBootstrap};
+use nexus_exchange::{
+    Admission, FrameCapacityBytes, FrameDeadlineMilliseconds, RetryDelayMilliseconds,
 };
 use shared_translator::{PeerIdentity, ProcessId, UserId};
 use meta_signal_capsule_nexus::{BudgetValue, DepthLimit, NodeLimit};

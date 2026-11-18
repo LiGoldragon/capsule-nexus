@@ -137,6 +137,15 @@ after it a connection may be quiet. The meta socket serves one connection at a
 time, the whole of it within the bootstrap deadline, and answers its exchanges
 in turn.
 
+This serving is every Nexus's, written once in the nexus repository:
+`nexus-serving` holds the listeners, the paired-peer admission, the meta and
+public exchange loops and the emission lane, `nexus-exchange` the framing,
+the socket names and the lanes, and `nexus-querying` the translator's
+querying end. The Capsule writes only its bodies: the meta Call answered by
+configuring (`MetaAnswering`), the public Call admitted, attempted and
+answered (`PublicServing`), and the peers a meta Configure binds
+(`PeerAdmitting`).
+
 ## External calls
 
 Each external command bears the checked `Arguable` trait on its own concrete

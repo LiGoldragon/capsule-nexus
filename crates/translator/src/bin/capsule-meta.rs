@@ -1,5 +1,5 @@
 use capsule_nexus_translator::TextClient;
-use capsule_nexus_translator::transport_types::Lane;
+use capsule_nexus_translator::transport::Lane;
 use std::env;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
