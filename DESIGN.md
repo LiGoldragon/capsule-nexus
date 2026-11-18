@@ -146,6 +146,20 @@ configuring (`MetaAnswering`), the public Call admitted, attempted and
 answered (`PublicServing`), and the peers a meta Configure binds
 (`PeerAdmitting`).
 
+The translator's side is every translator's too, written once in the
+translator repository: `translator-client` holds the CLIs' text lanes,
+the socket of each named after the Nexus in the place's runtime directory,
+and `translator-serving` both translator sockets, the Caller from
+SO_PEERCRED and the foreign-login refusal, readiness, text read within a
+budget, the Call carried to the Nexus once or followed, the meta split,
+the emission lane, the translator's bootstrap frame and the pair launcher.
+The Capsule writes only its bodies, on `CapsuleTranslator`: its public
+contract and a Subscribe followed (`PublicTranslating`), its own four
+settings answered and the rest forwarded as a `CoreSet`
+(`MetaTranslating`), a herdr call made for an emission
+(`EmissionAnswering`), and the core's bootstrap with a fresh instance
+identifier (`PairLaunching`).
+
 ## External calls
 
 Each external command bears the checked `Arguable` trait on its own concrete

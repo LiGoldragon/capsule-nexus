@@ -431,7 +431,7 @@ rec {
       };
       "capsule-nexus-translator" = rec {
         crateName = "capsule-nexus-translator";
-        version = "0.7.0";
+        version = "0.8.0";
         edition = "2021";
         crateBin = [
           {
@@ -496,11 +496,6 @@ rec {
             usesDefaultFeatures = false;
           }
           {
-            name = "nexus-querying";
-            packageId = "nexus-querying";
-            usesDefaultFeatures = false;
-          }
-          {
             name = "nix";
             packageId = "nix";
             features = [ "fs" "poll" "process" "signal" "socket" "user" ];
@@ -543,15 +538,25 @@ rec {
             rename = "shared-translator";
             features = [ "unix" ];
           }
+          {
+            name = "translator-client";
+            packageId = "translator-client";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "translator-serving";
+            packageId = "translator-serving";
+            usesDefaultFeatures = false;
+          }
         ];
         features = {
-          "text" = [ "datom" "dep:protos" "dep:datom-codec" "signal-capsule-nexus/datom" "shared-translator/text" ];
+          "text" = [ "datom" "dep:protos" "dep:datom-codec" "signal-capsule-nexus/datom" "shared-translator/text" "translator-serving/text" ];
         };
         resolvedDefaultFeatures = [ "datom" "default" "text" ];
       };
       "capsule-nexus-wire" = rec {
         crateName = "capsule-nexus-wire";
-        version = "0.7.0";
+        version = "0.8.0";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/wire; };
         libName = "capsule_nexus_wire";
@@ -564,11 +569,6 @@ rec {
             name = "datom-codec";
             packageId = "datom-codec";
             optional = true;
-          }
-          {
-            name = "meta-signal-capsule-nexus";
-            packageId = "meta-signal-capsule-nexus";
-            usesDefaultFeatures = false;
           }
           {
             name = "mio";
@@ -616,7 +616,7 @@ rec {
           }
         ];
         features = {
-          "datom" = [ "dep:datom-codec" "dep:protos" "signal-capsule-nexus/datom" "core-meta-capsule-nexus/datom" "meta-signal-capsule-nexus/datom" "shared-translator/datom" "nexus-exchange/datom" ];
+          "datom" = [ "dep:datom-codec" "dep:protos" "signal-capsule-nexus/datom" "core-meta-capsule-nexus/datom" "shared-translator/datom" "nexus-exchange/datom" ];
         };
         resolvedDefaultFeatures = [ "datom" "default" ];
       };
@@ -3136,6 +3136,113 @@ rec {
           "unix" = [ "dep:libc" "dep:nix" ];
         };
         resolvedDefaultFeatures = [ "datom" "default" "text" "unix" ];
+      };
+      "translator-client" = rec {
+        crateName = "translator-client";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/LiGoldragon/translator";
+          rev = "fc037957ca0887165fee69abbc0eea5169b5980a";
+          sha256 = "15c20999aqsxywrfn2vcz5szjyi468wqimlhk8sn3s9k2yzynsrh";
+        };
+        libName = "translator_client";
+        dependencies = [
+          {
+            name = "nexus-exchange";
+            packageId = "nexus-exchange";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            usesDefaultFeatures = false;
+            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+          {
+            name = "signal";
+            packageId = "signal";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "translator";
+            packageId = "translator";
+            rename = "shared-translator";
+            usesDefaultFeatures = false;
+            features = [ "unix" ];
+          }
+        ];
+        features = {
+          "datom" = [ "dep:datom-codec" "dep:protos" "nexus-exchange/datom" ];
+        };
+      };
+      "translator-serving" = rec {
+        crateName = "translator-serving";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/LiGoldragon/translator";
+          rev = "fc037957ca0887165fee69abbc0eea5169b5980a";
+          sha256 = "15c20999aqsxywrfn2vcz5szjyi468wqimlhk8sn3s9k2yzynsrh";
+        };
+        libName = "translator_serving";
+        dependencies = [
+          {
+            name = "datom-codec";
+            packageId = "datom-codec";
+            optional = true;
+          }
+          {
+            name = "nexus-exchange";
+            packageId = "nexus-exchange";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "nexus-querying";
+            packageId = "nexus-querying";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "nexus-serving";
+            packageId = "nexus-serving";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "nix";
+            packageId = "nix";
+            features = [ "fs" "poll" "process" "signal" "socket" "user" ];
+          }
+          {
+            name = "protos";
+            packageId = "protos";
+            optional = true;
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            usesDefaultFeatures = false;
+            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+          {
+            name = "signal";
+            packageId = "signal";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "translator";
+            packageId = "translator";
+            rename = "shared-translator";
+            usesDefaultFeatures = false;
+            features = [ "unix" ];
+          }
+        ];
+        features = {
+          "datom" = [ "dep:datom-codec" "dep:protos" "nexus-exchange/datom" "shared-translator/datom" ];
+          "text" = [ "datom" "shared-translator/text" ];
+        };
+        resolvedDefaultFeatures = [ "datom" "text" ];
       };
       "unicode-ident" = rec {
         crateName = "unicode-ident";

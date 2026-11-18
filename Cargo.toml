@@ -19,3 +19,5 @@ tokio = { version = "1.53", default-features = false }
 futures-util = { version = "0.3", default-features = false }
 shared-translator = { package = "translator", git = "https://github.com/LiGoldragon/translator", rev = "29601a3", default-features = false, features = ["unix"] }
 translator = { git = "https://github.com/LiGoldragon/translator", rev = "29601a3", default-features = false }
+translator-client = { git = "https://github.com/LiGoldragon/translator", rev = "fc037957ca0887165fee69abbc0eea5169b5980a", default-features = false }
+translator-serving = { git = "https://github.com/LiGoldragon/translator", rev = "fc037957ca0887165fee69abbc0eea5169b5980a", default-features = false }

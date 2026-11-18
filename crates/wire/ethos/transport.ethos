@@ -1,9 +1,7 @@
 Library
 [ shared_translator:[ Place PeerIdentity ]              ; imports
-  meta_signal_capsule_nexus:[ BudgetValue ]
   signal_capsule_nexus:[ InstanceId ]
   nexus_exchange:[ Admission ] ]
-[ CoreBootstrap.{ Place Admission PeerIdentity InstanceId }   ; types
-  TranslatorBootstrap.{ Place Admission BudgetValue PeerIdentity } ]
+[ CoreBootstrap.{ Place Admission PeerIdentity InstanceId } ]   ; types
 []                                                    ; traits
 []                                                    ; associations

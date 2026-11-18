@@ -1,20 +1,8 @@
-use capsule_nexus_translator::TextClient;
-use capsule_nexus_translator::transport::Lane;
-use std::env;
+use capsule_nexus_wire::CapsuleNexus;
+use translator_client::{AnswerPrinting, Invoking, TextInvocation, TextLane};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut arguments = env::args().skip(1);
-    let name = arguments.next().ok_or("METAFLOW")?;
-    let text = arguments.next().ok_or("DATOM")?;
-    if arguments.next().is_some() {
-        return Err("unexpected argument".into());
-    }
-    let place = shared_translator::placement::resolve_place(&name)?;
-    let names = capsule_nexus_wire::socket_names();
-    let client = TextClient::new(
-        shared_translator::placement::runtime_path(&place).join(names.meta_translator_socket.0),
-        signal::MAXIMUM_SIGNAL_BYTES,
-    );
-    println!("{}", client.request(Lane::MetaText, &text)?);
+    TextInvocation::from_arguments::<CapsuleNexus>(TextLane::MetaText, std::env::args().skip(1))?
+        .print_answers()?;
     Ok(())
 }

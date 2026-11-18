@@ -1,12 +1,12 @@
-use capsule_nexus_translator::maximum_text_budget;
-use capsule_nexus_translator::transport_types::{CoreBootstrap, TranslatorBootstrap};
+use capsule_nexus_translator::transport_types::CoreBootstrap;
 use nexus_exchange::{
     Admission, FrameCapacityBytes, FrameDeadlineMilliseconds, RetryDelayMilliseconds,
 };
-use shared_translator::{PeerIdentity, ProcessId, UserId};
-use meta_signal_capsule_nexus::{BudgetValue, DepthLimit, NodeLimit};
-use shared_translator::{FrameCapacity, FrameWriting, Signalizable};
+use shared_translator::{FrameCapacity, FrameWriting, PeerIdentity, ProcessId, Signalizable, UserId};
 use std::{env, io};
+use translator_serving::{
+    Budgeting, DepthLimit, NodeLimit, TextLimits, TranslatorBootstrap, ValidTextBudget,
+};
 
 fn integer(value: Option<String>, name: &str) -> Result<i64, Box<dyn std::error::Error>> {
     value.ok_or_else(|| name.to_owned())?.parse().map_err(Into::into)
@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|message| format!("invalid admission: {message}"))?;
     let place = shared_translator::decode::<shared_translator::Place>(
         &place_text,
-        &mut maximum_text_budget(),
+        &mut ValidTextBudget::MAXIMUM.budget(),
     )
         .map_err(|error| format!("{error:?}"))?;
     shared_translator::placement::validate_place_name(&place.place_name.0)?;
@@ -45,12 +45,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?
         },
         "Translator" => {
-            let budget_value = BudgetValue {
+            let text_limits = TextLimits {
                 node_limit: NodeLimit(integer(arguments.next(), "TEXT_NODE_LIMIT")?),
                 depth_limit: DepthLimit(integer(arguments.next(), "TEXT_DEPTH_LIMIT")?),
             };
             output.write_frame(
-                &TranslatorBootstrap { place, admission, budget_value, peer_identity }.signalize()?,
+                &TranslatorBootstrap { place, admission, text_limits, peer_identity }.signalize()?,
                 FrameCapacity::from(signal::MAXIMUM_SIGNAL_BYTES),
             )?;
         }

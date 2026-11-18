@@ -1,6 +1,6 @@
 [package]
 name = "capsule-nexus-wire"
-version = "0.7.0"
+version = "0.8.0"
 edition.workspace = true
 rust-version.workspace = true
 publish = false
@@ -12,7 +12,6 @@ datom = [
   "dep:protos",
   "signal-capsule-nexus/datom",
   "core-meta-capsule-nexus/datom",
-  "meta-signal-capsule-nexus/datom",
   "shared-translator/datom",
   "nexus-exchange/datom",
 ]
@@ -24,7 +23,6 @@ rkyv = { version = "0.8", default-features = false, features = ["std", "bytechec
 signal = { workspace = true }
 signal-capsule-nexus = { workspace = true }
 core-meta-capsule-nexus = { path = "../core-meta" }
-meta-signal-capsule-nexus.workspace = true
 shared-translator.workspace = true
 nexus-exchange.workspace = true
 # The shared feature set requires these dependency edges in the Cargo graph.

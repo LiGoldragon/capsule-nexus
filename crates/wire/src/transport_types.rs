@@ -14,12 +14,3 @@ pub struct CoreBootstrap {
     pub peer_identity: shared_translator::PeerIdentity,
     pub instance_id: signal_capsule_nexus::InstanceId,
 }
-#[rustfmt::skip]
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
-pub struct TranslatorBootstrap {
-    pub place: Place,
-    pub admission: nexus_exchange::Admission,
-    pub budget_value: meta_signal_capsule_nexus::BudgetValue,
-    pub peer_identity: shared_translator::PeerIdentity,
-}

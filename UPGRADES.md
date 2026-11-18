@@ -1,5 +1,47 @@
 # Upgrades
 
+## 0.8.0 — the translator is every translator's
+
+The translator and the wire move to 0.8.0; core, core-meta, daemon and
+emission stay.
+
+**Pins.** `translator-client` and `translator-serving` 0.1.0, one revision
+of the translator repository (fc03795); build-base registers them
+(f00b376). translator 0.5.2 at 29601a3, nexus 0.9.0, the nexus crates at
+8976179, signal 11.2.0 and both contracts stay.
+
+**What moved.** `TextClient` and its lanes leave the translator crate for
+`translator-client`; the translator sockets, the per-connection serving, the
+forwarding of a public Call once or followed and of a meta Call within one
+deadline, the emission lane, the text budget, reading the bootstrap and the
+pair launcher leave it for `translator-serving`. `TranslatorBootstrap`
+leaves `transport.ethos` for `translator-serving`'s Ethos: its text limits
+are `TextLimits.{ NodeLimit DepthLimit }`, the archive the old
+`BudgetValue` field had, so the frame is the same bytes. The wire keeps
+`CoreBootstrap` and no longer depends on the meta contract. The translator
+crate keeps its own: `CapsuleTranslator` implementing `Translator`,
+`PublicTranslating`, `MetaTranslating`, `EmissionAnswering` and
+`PairLaunching`, its settings, the herdr runner and decoders, and the five
+binaries, each a few lines over the shared crates. Its `text` feature turns
+on `translator-serving/text`. Removed from the translator crate's library:
+`TextClient`, `ClientError`, `text_budget`, `maximum_text_budget`, the
+`placement` re-export, `server::run`, `server::serve_one`, `Endpoint` and
+`ServerError`; use the shared crates' `TextClient`, `ValidTextBudget`,
+`TranslatorServing`, `Connection` and `TranslatorError`.
+
+**Behaviour.** Unchanged: the sockets, the lanes, the exchange frames, the
+bootstrap frames' archives, the launcher's arguments and every Datom text
+are as they were. Client-facing failure text names no component: an
+exchange error the translator answers with reads `Nexus exchange error`
+where it read `Capsule Nexus exchange error`, a CLI's error reads
+`translator client error` where it read `herdr translator client error`,
+and the launcher ends with `paired process ended`, where it said `paired
+Herdr process ended`, and names a missing `NEXUS_EXECUTABLE` where it named
+`CORE_EXECUTABLE`. The translator's stderr lines name it by its title,
+`Capsule Nexus translator`.
+
+To deploy: rebuild the daemon, the translator and the CLIs together.
+
 ## 0.7.0 — the serving is every Nexus's
 
 wire, daemon and the translator move to 0.7.0; core, core-meta and emission

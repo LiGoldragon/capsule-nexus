@@ -90,7 +90,7 @@ dependencies = [
 
 [[package]]
 name = "capsule-nexus-translator"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "capsule-nexus-wire",
  "core-meta-capsule-nexus",
@@ -99,7 +99,6 @@ dependencies = [
  "libc",
  "meta-signal-capsule-nexus",
  "nexus-exchange",
- "nexus-querying",
  "nix",
  "protos",
  "rkyv",
@@ -109,15 +108,16 @@ dependencies = [
  "signal",
  "signal-capsule-nexus",
  "translator",
+ "translator-client",
+ "translator-serving",
 ]
 
 [[package]]
 name = "capsule-nexus-wire"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "core-meta-capsule-nexus",
  "datom-codec",
- "meta-signal-capsule-nexus",
  "mio",
  "nexus-exchange",
  "protos",
@@ -895,6 +895,33 @@ dependencies = [
  "rkyv",
  "rustix",
  "signal",
+]
+
+[[package]]
+name = "translator-client"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/translator?rev=fc037957ca0887165fee69abbc0eea5169b5980a#fc037957ca0887165fee69abbc0eea5169b5980a"
+dependencies = [
+ "nexus-exchange",
+ "rkyv",
+ "signal",
+ "translator",
+]
+
+[[package]]
+name = "translator-serving"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/translator?rev=fc037957ca0887165fee69abbc0eea5169b5980a#fc037957ca0887165fee69abbc0eea5169b5980a"
+dependencies = [
+ "datom-codec",
+ "nexus-exchange",
+ "nexus-querying",
+ "nexus-serving",
+ "nix",
+ "protos",
+ "rkyv",
+ "signal",
+ "translator",
 ]
 
 [[package]]

@@ -1,129 +1,14 @@
-//! Text-front translator and typed herdr external boundary.
+//! The Capsule Nexus's translator: its own settings and the herdr calls it
+//! makes for the Nexus, the bodies it writes for the serving every
+//! translator shares (`translator-serving`), and its CLIs on the client end
+//! (`translator-client`).
 
+pub mod instance;
 pub mod runner;
 pub mod server;
 pub mod generated {
     pub mod argument;
 }
-pub use nexus_exchange::lane as transport;
 pub use capsule_nexus_wire::transport_types;
-
-use nexus_exchange::lane::{Frame, LaneReading, LaneWriting, TransportError};
-use nexus_exchange::lane::{Kind, Lane};
-
-/// One text-lane connection to the translator. The CLI carries text only;
-/// typed signal begins behind the translator.
-pub struct TextClient {
-    socket: std::path::PathBuf,
-    admission_limit: usize,
-}
-
-impl TextClient {
-    pub fn new(socket: impl Into<std::path::PathBuf>, admission_limit: usize) -> Self {
-        Self {
-            socket: socket.into(),
-            admission_limit,
-        }
-    }
-
-    pub fn request(&self, lane: Lane, text: &str) -> Result<String, ClientError> {
-        let mut first = None;
-        self.request_stream(lane, text, |answer| {
-            if first.is_none() {
-                first = Some(answer.to_owned());
-            }
-            false
-        })?;
-        first.ok_or_else(|| ClientError::Protocol("translator closed without an answer".into()))
-    }
-
-    /// Delivers each answer in order. Returning false stops after that answer;
-    /// returning true keeps the nondurable subscription connection open.
-    pub fn request_stream(
-        &self,
-        lane: Lane,
-        text: &str,
-        mut receive: impl FnMut(&str) -> bool,
-    ) -> Result<(), ClientError> {
-        if lane == Lane::EmissionSignal {
-            return Err(ClientError::Transport(TransportError::WrongLane));
-        }
-        let mut stream =
-            std::os::unix::net::UnixStream::connect(&self.socket).map_err(ClientError::Io)?;
-        LaneWriting::write_lane_frame(
-            &mut stream,
-            &Frame {
-                lane: lane.clone(),
-                kind: Kind::Request,
-                payload: text.as_bytes().to_vec(),
-            },
-            self.admission_limit,
-        )
-        .map_err(ClientError::Transport)?;
-        let mut received = false;
-        loop {
-            let response = match LaneReading::read_lane_frame(&mut stream, self.admission_limit) {
-                Ok(response) => response,
-                Err(TransportError::Io(error))
-                    if received && error.kind() == std::io::ErrorKind::UnexpectedEof =>
-                {
-                    return Ok(())
-                }
-                Err(error) => return Err(ClientError::Transport(error)),
-            };
-            if response.lane != lane {
-                return Err(ClientError::Protocol(
-                    "translator answered on another lane".into(),
-                ));
-            }
-            let text = String::from_utf8(response.payload)
-                .map_err(|_| ClientError::Protocol("translator returned non-UTF-8 text".into()))?;
-            match response.kind {
-                Kind::Answered if receive(&text) => {
-                    received = true;
-                }
-                Kind::Answered => return Ok(()),
-                Kind::Failed => return Err(ClientError::Protocol(text)),
-                Kind::Request => {
-                    return Err(ClientError::Protocol(
-                        "translator answered with request kind".into(),
-                    ))
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum ClientError {
-    Io(std::io::Error),
-    Transport(TransportError),
-    Protocol(String),
-}
-
-impl std::fmt::Display for ClientError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "herdr translator client error: {self:?}")
-    }
-}
-impl std::error::Error for ClientError {}
-
-#[cfg(feature = "text")]
-pub use shared_translator::placement;
-
-/// The one construction of a textualization budget used by every translator
-/// entry point and request decoder.
-#[cfg(feature = "text")]
-pub fn text_budget(nodes: usize, depth: usize) -> datom_codec::Budget {
-    datom_codec::Budget {
-        remaining: i64::try_from(nodes).expect("validated text nodes fit i64"),
-        reader: protos::ReaderBudget::try_from(nodes).expect("validated text nodes fit the reader budget"),
-        depth: 0,
-        maximum_depth: i64::try_from(depth).expect("validated text depth fits i64"),
-    }
-}
-
-#[cfg(feature = "text")]
-pub fn maximum_text_budget() -> datom_codec::Budget {
-    text_budget(signal::MAXIMUM_SIGNAL_BYTES, signal::MAXIMUM_SIGNAL_DEPTH)
-}
+pub use nexus_exchange::lane as transport;
+pub use server::CapsuleTranslator;
