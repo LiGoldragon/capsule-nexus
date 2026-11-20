@@ -1655,8 +1655,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/nexus";
-          rev = "d020a62d9258c9d8682faedf77252d8778ed0857";
-          sha256 = "1lvnjlpaky1mgwngq4idkcd4mra4j7a5kvnaraz8v57fs9zskj4d";
+          rev = "24804e89416fd64644355527ee219d7a40d3462e";
+          sha256 = "06bzqq7ms4w70viidl1mw5jgc761npm1y76sy4lgwwy9dx9gh1f6";
         };
         dependencies = [
           {
@@ -1673,6 +1673,7 @@ rec {
           {
             name = "signal";
             packageId = "signal";
+            usesDefaultFeatures = false;
           }
           {
             name = "thiserror";
@@ -1682,7 +1683,7 @@ rec {
             name = "tokio";
             packageId = "tokio";
             usesDefaultFeatures = false;
-            features = [ "sync" ];
+            features = [ "sync" "net" "io-util" ];
           }
         ];
         buildDependencies = [

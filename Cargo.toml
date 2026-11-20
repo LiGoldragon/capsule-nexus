@@ -10,7 +10,7 @@ rust-version = "1.89"
 signal-capsule-nexus = { git = "https://github.com/LiGoldragon/signal-capsule-nexus", rev = "c0194987e9133126e3c8b2d4530e247ec437ee67", default-features = false }
 meta-signal-capsule-nexus = { git = "https://github.com/LiGoldragon/meta-signal-capsule-nexus", rev = "76b4235650b6b1940478c30fc992d17c6e0e0459", default-features = false }
 signal = { git = "https://github.com/LiGoldragon/signal", rev = "4f5cbb9", default-features = false }
-nexus = { git = "https://github.com/LiGoldragon/nexus", rev = "d020a62", default-features = false }
+nexus = { git = "https://github.com/LiGoldragon/nexus", rev = "24804e89416fd64644355527ee219d7a40d3462e", default-features = false }
 nexus-exchange = { git = "https://github.com/LiGoldragon/nexus", rev = "a4bc0113c10c34ec9d92cde2d650eca9324144db", default-features = false }
 nexus-querying = { git = "https://github.com/LiGoldragon/nexus", rev = "a4bc0113c10c34ec9d92cde2d650eca9324144db", default-features = false }
 nexus-serving = { git = "https://github.com/LiGoldragon/nexus", rev = "a4bc0113c10c34ec9d92cde2d650eca9324144db", default-features = false }
