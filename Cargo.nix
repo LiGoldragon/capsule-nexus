@@ -323,7 +323,7 @@ rec {
           }
         ];
         features = {
-          "datom" = [ "dep:datom-codec" "dep:protos" "signal-capsule-nexus/datom" "translator/datom" ];
+          "datom" = [ "nexus/datom" "dep:datom-codec" "dep:protos" "signal-capsule-nexus/datom" "translator/datom" ];
         };
         resolvedDefaultFeatures = [ "datom" "default" ];
       };
@@ -1660,9 +1660,19 @@ rec {
         };
         dependencies = [
           {
+            name = "datom-codec";
+            packageId = "datom-codec";
+            optional = true;
+          }
+          {
             name = "futures-util";
             packageId = "futures-util";
             usesDefaultFeatures = false;
+          }
+          {
+            name = "protos";
+            packageId = "protos";
+            optional = true;
           }
           {
             name = "rkyv";
@@ -1703,6 +1713,7 @@ rec {
         features = {
           "datom" = [ "dep:datom-codec" "dep:protos" ];
         };
+        resolvedDefaultFeatures = [ "datom" ];
       };
       "nexus-exchange" = rec {
         crateName = "nexus-exchange";
